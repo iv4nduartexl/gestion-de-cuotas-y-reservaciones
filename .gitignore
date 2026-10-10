@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# allow the env template
+!.env.example
+!.env.test
+
+# Playwright
+/tests/e2e/.auth/
+/test-results/
+/playwright-report/
