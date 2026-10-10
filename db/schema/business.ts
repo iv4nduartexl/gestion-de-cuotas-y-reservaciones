@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { boolean, check, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, check, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 import { BUSINESS_TYPES, TEAM_MODES } from "../../lib/business-types";
 import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "../../lib/constants";
@@ -25,6 +25,33 @@ export const businessSettings = pgTable(
     // "solo": the owner is the only person taking appointments, and the UI
     // never mentions staff. "team": staff management is shown.
     teamMode: text({ enum: TEAM_MODES }).notNull().default("solo"),
+
+    // Online booking rules (Configuración → Reservas online).
+    // false: online bookings arrive as "pending" and the business confirms them.
+    autoConfirmBookings: boolean().notNull().default(true),
+    minNoticeMinutes: integer().notNull().default(60),
+    maxDaysAhead: integer().notNull().default(60),
+    slotIntervalMinutes: integer().notNull().default(15),
+    bufferMinutes: integer().notNull().default(0),
+    clientCancelNoticeHours: integer().notNull().default(4),
+
+    // Public profile shown on the booking page.
+    publicPhone: text(), // E.164
+    address: text(),
+    description: text(),
+
+    // Memberships: days after the due date before a cuota counts as overdue,
+    // and the WhatsApp reminder text ({nombre}, {plan}, {monto}, {vencimiento}).
+    graceDays: integer().notNull().default(0),
+    paymentReminderTemplate: text(),
+
+    // Reminders (Configuración → Recordatorios).
+    remindAppointments24h: boolean().notNull().default(true),
+    remindAppointments2h: boolean().notNull().default(false),
+    remindChargesDaysBefore: integer().notNull().default(3), // 0 = off
+    remindChargesOnDue: boolean().notNull().default(true),
+    remindChargesDaysAfter: integer().notNull().default(3), // 0 = off
+    appointmentReminderTemplate: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -35,6 +62,17 @@ export const businessSettings = pgTable(
     check(
       "business_settings_slug_format",
       sql`${table.slug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`,
+    ),
+    check(
+      "business_settings_booking_rules",
+      sql`${table.minNoticeMinutes} between 0 and 10080
+        and ${table.maxDaysAhead} between 1 and 365
+        and ${table.slotIntervalMinutes} in (5, 10, 15, 20, 30, 45, 60)
+        and ${table.bufferMinutes} between 0 and 120
+        and ${table.clientCancelNoticeHours} between 0 and 168
+        and ${table.graceDays} between 0 and 60
+        and ${table.remindChargesDaysBefore} between 0 and 30
+        and ${table.remindChargesDaysAfter} between 0 and 30`,
     ),
     check(
       "business_settings_business_type",

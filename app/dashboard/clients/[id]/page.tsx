@@ -1,5 +1,6 @@
-import { MailIcon, PhoneIcon } from "lucide-react";
+import { MailIcon, PhoneIcon, PlusIcon } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
@@ -8,15 +9,24 @@ import {
   updateClientAction,
 } from "@/app/dashboard/clients/actions";
 import { ClientForm } from "@/components/clients/client-form";
+import { MembershipSection } from "@/components/memberships/membership-section";
 import { WhatsAppButton } from "@/components/clients/whatsapp-button";
 import { ListSkeleton } from "@/components/dashboard/list-skeleton";
 import { ConfirmActionButton } from "@/components/forms/confirm-action-button";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { SectionCard } from "@/components/ui-kit/section-card";
 import { EntityAvatar } from "@/components/ui-kit/entity-avatar";
 import { PageHeader } from "@/components/ui-kit/page-header";
 import { parseId } from "@/lib/actions";
+import { STATUS_BADGE, STATUS_LABELS } from "@/lib/appointment-status";
 import { capitalize, vocabularyFor } from "@/lib/business-types";
+import { listClientAppointments } from "@/lib/data/appointments";
 import { getClient } from "@/lib/data/clients";
+import { formatInZone, todayInZone } from "@/lib/datetime";
+import { listClientCharges, syncCharges } from "@/lib/data/charges";
+import { listClientEnrollments } from "@/lib/data/enrollments";
+import { listPlans } from "@/lib/data/plans";
 import { formatCi } from "@/lib/document";
 import { formatPhone } from "@/lib/phone";
 import { can, getTenantContextOrRedirect } from "@/lib/tenant";
@@ -43,6 +53,12 @@ async function ClientDetail({
   if (!client) notFound();
 
   const archived = client.archivedAt !== null;
+  const turnos = ctx.settings.appointmentsEnabled ? await listClientAppointments(ctx, client.id) : [];
+  const today = todayInZone(ctx.settings.timezone);
+  if (ctx.settings.membershipsEnabled) await syncCharges(ctx, { today });
+  const [enrollmentRows, chargeRows, planRows] = ctx.settings.membershipsEnabled
+    ? await Promise.all([listClientEnrollments(ctx, client.id), listClientCharges(ctx, client.id, today), listPlans(ctx)])
+    : [[], [], []];
   return (
     <>
       <PageHeader back={{ href: "/dashboard/clients", label: capitalize(words.many) }} title={client.name} />
@@ -64,6 +80,11 @@ async function ClientDetail({
               <span className="inline-flex items-center gap-1.5">
                 <MailIcon className="size-4" aria-hidden="true" />
                 {client.email}
+                {client.emailOptOutAt && (
+                  <Badge variant="neutral" title="Se dio de baja desde el link del correo. Sus recordatorios van a la bandeja de WhatsApp.">
+                    No quiere recibir correos
+                  </Badge>
+                )}
               </span>
             )}
           </div>
@@ -77,14 +98,60 @@ async function ClientDetail({
               title={archived ? `¿Restaurar ${words.one}?` : `¿Archivar ${words.one}?`}
               description={
                 archived
-                  ? `Vuelve a aparecer en tu lista de ${words.many}.`
-                  : `Deja de aparecer en tu lista, pero no se borra nada. Podés restaurarlo cuando quieras.`
+                  ? `Vuelve a aparecer en tu lista de ${words.many}. Si tenía membresías, siguen pausadas: reanudalas desde acá cuando vuelva.`
+                  : `Deja de aparecer en tu lista, pero no se borra nada.${ctx.settings.membershipsEnabled ? " Sus membresías se pausan: no se generan más cuotas ni recordatorios de pago." : ""} Podés restaurarlo cuando quieras.`
               }
               successMessage={archived ? "Restaurado" : "Archivado"}
             />
           )}
         </div>
       </section>
+
+      {ctx.settings.membershipsEnabled && (
+        <MembershipSection
+          clientId={client.id}
+          clientName={client.name}
+          enrollments={enrollmentRows}
+          charges={chargeRows}
+          plans={planRows}
+          today={today}
+          currency={ctx.settings.currency}
+          canEnroll={can(ctx, { enrollment: ["create"] }) && !archived}
+          canManage={can(ctx, { enrollment: ["update"] })}
+          canPay={can(ctx, { payment: ["create"] })}
+        />
+      )}
+
+      {ctx.settings.appointmentsEnabled && (
+        <SectionCard
+          title="Turnos"
+          description={turnos.length === 0 ? `Todavía no tiene turnos.` : `Los próximos y su historial.`}
+          actions={
+            can(ctx, { appointment: ["create"] }) && (
+              <Link href="/dashboard/agenda/new" className={buttonVariants({ variant: "soft", size: "sm" })}>
+                <PlusIcon aria-hidden="true" /> Nuevo turno
+              </Link>
+            )
+          }
+        >
+          {turnos.length > 0 && (
+            <ul className="flex flex-col divide-y">
+              {turnos.map((turno) => (
+                <li key={turno.id}>
+                  <Link href={`/dashboard/agenda/${turno.id}`} className="flex items-center gap-3 py-3 hover:text-primary">
+                    <span className="flex w-24 shrink-0 flex-col leading-tight">
+                      <span className="font-bold tabular">{formatInZone(turno.startsAt, ctx.settings.timezone, "dd/MM/yyyy")}</span>
+                      <span className="text-xs text-muted-foreground tabular">{formatInZone(turno.startsAt, ctx.settings.timezone, "HH:mm")}</span>
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm">{turno.serviceName}</span>
+                    <Badge variant={STATUS_BADGE[turno.status]}>{STATUS_LABELS[turno.status]}</Badge>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+      )}
 
       {can(ctx, { client: ["update"] }) ? (
         <ClientForm

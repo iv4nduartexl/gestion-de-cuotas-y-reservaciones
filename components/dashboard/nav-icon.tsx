@@ -1,5 +1,9 @@
 import {
+  BellRingIcon,
   CalendarClockIcon,
+  ClipboardListIcon,
+  WalletIcon,
+  CalendarDaysIcon,
   HouseIcon,
   type LucideProps,
   ScissorsIcon,
@@ -12,6 +16,10 @@ import type { NavIcon as NavIconName } from "@/lib/navigation";
 
 const ICONS = {
   home: HouseIcon,
+  agenda: CalendarDaysIcon,
+  cuotas: WalletIcon,
+  reminders: BellRingIcon,
+  plans: ClipboardListIcon,
   clients: UserRoundIcon,
   services: ScissorsIcon,
   schedule: CalendarClockIcon,

@@ -1,4 +1,3 @@
-
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
@@ -9,9 +8,19 @@ import * as schema from "./schema";
 const globalForDb = globalThis as unknown as { pgPool?: Pool };
 
 const pool =
-  globalForDb.pgPool ?? new Pool({ connectionString: env.DATABASE_URL });
+  globalForDb.pgPool ??
+  new Pool({
+    connectionString: env.DATABASE_URL,
+    max: env.DATABASE_POOL_MAX,
+    // Fail fast instead of hanging when the database is unreachable.
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 30_000,
+  });
 
 if (env.NODE_ENV !== "production") globalForDb.pgPool = pool;
+
+// A broken idle connection (e.g. Postgres restarted) must not crash the app.
+pool.on("error", (error) => console.error("Postgres pool error", error));
 
 export const db = drizzle(pool, { schema, casing: "snake_case" });
 

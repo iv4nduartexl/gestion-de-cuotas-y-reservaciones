@@ -17,10 +17,13 @@ export function BusinessUsageForm({
   businessType,
   appointmentsEnabled,
   membershipsEnabled,
+  usage,
 }: {
   businessType: BusinessType;
   appointmentsEnabled: boolean;
   membershipsEnabled: boolean;
+  /** Data that would be hidden by turning a product off. */
+  usage: { upcomingTurnos: number; activeMemberships: number };
 }) {
   const { state, pending, formProps } = useFormAction(updateBusinessUsageAction, {});
   const errors = state.errors ?? {};
@@ -53,10 +56,22 @@ export function BusinessUsageForm({
         <UsageToggle
           icon={<WalletIcon className="size-5" aria-hidden="true" />}
           title="Cuotas y membresías"
-          description="Planes y cuotas mensuales. Muy pronto."
+          description="Planes y cuotas: quién pagó, quién debe y recordatorios de pago."
           checked={memberships}
           onCheckedChange={setMemberships}
         />
+        {appointmentsEnabled && !appointments && usage.upcomingTurnos > 0 && (
+          <FormMessage type="warning">
+            Tenés {usage.upcomingTurnos} turno{usage.upcomingTurnos === 1 ? "" : "s"} por delante. Si apagás los turnos, tu link de reservas deja de
+            funcionar, no se mandan recordatorios y la Agenda se oculta. No se borra nada: si los volvés a prender, todo sigue ahí.
+          </FormMessage>
+        )}
+        {membershipsEnabled && !memberships && usage.activeMemberships > 0 && (
+          <FormMessage type="warning">
+            Tenés {usage.activeMemberships} membresía{usage.activeMemberships === 1 ? "" : "s"} activa{usage.activeMemberships === 1 ? "" : "s"}. Si apagás
+            las cuotas, dejan de generarse y no se recuerdan pagos. No se borra nada: si las volvés a prender, se ponen al día.
+          </FormMessage>
+        )}
         {(errors.products || (!appointments && !memberships)) && (
           <p className="text-sm text-destructive">{errors.products ?? "Elegí al menos una opción."}</p>
         )}

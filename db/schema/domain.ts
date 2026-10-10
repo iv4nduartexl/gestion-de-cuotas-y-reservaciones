@@ -33,6 +33,8 @@ export const clients = pgTable(
     // Paraguayan cédula or other ID document.
     documentNumber: text(),
     notes: text(),
+    // Set when the client unsubscribes from reminder emails (/baja link).
+    emailOptOutAt: timestamp({ withTimezone: true }),
     archivedAt: timestamp({ withTimezone: true }),
     ...timestamps,
   },

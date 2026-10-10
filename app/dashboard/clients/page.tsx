@@ -65,6 +65,7 @@ async function ClientList({
   return (
     <>
       <PageHeader
+        help={{ section: "clients", settings: ctx.settings, open: isEmptyBusiness }}
         title={capitalize(words.many)}
         description={`Las personas que te visitan, con su contacto y C.I. a mano.`}
         actions={
@@ -80,7 +81,7 @@ async function ClientList({
         <EmptyState
           icon={UserRoundPlusIcon}
           title={archivedCount > 0 ? `No tenés ${words.many} activos` : `Todavía no cargaste ${words.many}`}
-          description={`Guardá a las personas que te visitan para tener su teléfono a mano, escribirles por WhatsApp con un toque y, más adelante, enviarles recordatorios.`}
+          description={`Guardá a las personas que te visitan para tener su teléfono a mano, escribirles por WhatsApp con un toque y que les lleguen recordatorios de sus turnos y cuotas.`}
           action={
             <div className="flex flex-wrap justify-center gap-2">
               <Link href={newHref} className={buttonVariants({ size: "lg" })}>

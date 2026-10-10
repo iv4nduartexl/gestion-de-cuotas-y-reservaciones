@@ -13,6 +13,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui-kit/empty-state";
 import { EntityAvatar } from "@/components/ui-kit/entity-avatar";
 import { HelpHint } from "@/components/ui-kit/help-hint";
+import { getSetupStatus } from "@/lib/data/setup";
 import { PageHeader } from "@/components/ui-kit/page-header";
 import { SectionCard } from "@/components/ui-kit/section-card";
 import { requireProduct } from "@/lib/actions";
@@ -46,7 +47,8 @@ async function Schedule({ searchParams }: { searchParams: PageProps<"/dashboard/
   const isTeam = ctx.settings.teamMode === "team";
   const isMember = ctx.role === "member";
 
-  const people = await listStaff(ctx);
+  const [people, setup] = await Promise.all([listStaff(ctx), getSetupStatus(ctx)]);
+  const hasHours = setup.availabilityRules > 0;
   const ownStaff = isMember ? await getStaffForMember(ctx, ctx.memberId) : null;
   const requested = typeof params.persona === "string" ? params.persona : undefined;
   const person =
@@ -90,6 +92,7 @@ async function Schedule({ searchParams }: { searchParams: PageProps<"/dashboard/
   return (
     <>
       <PageHeader
+        help={{ section: "schedule", settings: ctx.settings, open: !hasHours }}
         title="Horarios"
         description={
           <>

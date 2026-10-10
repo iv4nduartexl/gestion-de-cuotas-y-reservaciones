@@ -57,8 +57,8 @@ export function formatInZone(
 }
 
 /** Today's date ("yyyy-MM-dd") in the given timezone. */
-export function todayInZone(timeZone: string): string {
-  return format(new Date(), "yyyy-MM-dd", { in: tz(timeZone) });
+export function todayInZone(timeZone: string, now: Date = new Date()): string {
+  return format(now, "yyyy-MM-dd", { in: tz(timeZone) });
 }
 
 /** Formats a calendar date string ("yyyy-MM-dd"), independent of timezone. */

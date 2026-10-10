@@ -5,7 +5,8 @@ import { MobileTabBar } from "@/components/dashboard/mobile-tab-bar";
 import { SectionTitle } from "@/components/dashboard/section-title";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { FlashToast } from "@/components/ui-kit/flash-toast";
-import { buildNavigation } from "@/lib/navigation";
+import { getNavigation } from "@/lib/data/navigation";
+import { allNavItems, buildNavigation } from "@/lib/navigation";
 import { getTenantContextOrRedirect } from "@/lib/tenant";
 
 // Static shell (sidebar frame, header) renders instantly; everything that
@@ -39,14 +40,10 @@ export default function DashboardLayout({ children }: LayoutProps<"/dashboard">)
 
 async function HeaderSection() {
   const ctx = await getTenantContextOrRedirect();
-  const navigation = buildNavigation(ctx.settings);
-  return <SectionTitle items={[...navigation.main, navigation.settings]} />;
+  return <SectionTitle items={allNavItems(buildNavigation(ctx.settings))} />;
 }
 
 async function BottomNavigation() {
   const ctx = await getTenantContextOrRedirect();
-  const navigation = buildNavigation(ctx.settings);
-  const items = navigation.main.slice(0, 4);
-  if (items.length < 4) items.push(navigation.settings);
-  return <MobileTabBar items={items} />;
+  return <MobileTabBar navigation={await getNavigation(ctx)} />;
 }

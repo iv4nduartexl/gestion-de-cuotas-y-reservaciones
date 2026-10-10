@@ -17,6 +17,8 @@ test("create a second business and switch between them", async ({ page }) => {
   await page.getByRole("button", { name: "Crear mi negocio" }).click();
 
   await expect(page).toHaveURL(/\/dashboard/);
+  // Every new business starts with the welcome tour.
+  await page.getByRole("dialog").getByRole("button", { name: "Saltar" }).click();
   await expect(sidebar(page).getByRole("button", { name: /Academia Gamma/ })).toBeVisible();
   // "Otro rubro" with turnos: appointment sections appear, solo mode hides "Equipo".
   await expect(sidebar(page).getByRole("link", { name: "Horarios" })).toBeVisible();

@@ -42,7 +42,10 @@ export default defineConfig({
       BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET!,
       EMAIL_TRANSPORT: "console",
       NODE_ENV: "production",
-      AUTH_RATE_LIMIT: "off",
+      RATE_LIMITS: "off",
+      CRON_SECRET: process.env.CRON_SECRET!,
+      PAYMENT_PROVIDERS: process.env.PAYMENT_PROVIDERS!,
+      FAKE_PROVIDER_SECRET: process.env.FAKE_PROVIDER_SECRET!,
     },
   },
 });

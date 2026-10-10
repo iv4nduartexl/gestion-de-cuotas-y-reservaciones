@@ -1,9 +1,10 @@
 import "server-only";
 
-import { and, count, eq, isNull } from "drizzle-orm";
+import { and, count, eq, gt, inArray, isNull } from "drizzle-orm";
 
 import { db } from "@/db";
-import { businessSettings, organization, staff } from "@/db/schema";
+import { appointments, businessSettings, enrollments, organization, slugRedirects, staff } from "@/db/schema";
+import { ACTIVE_STATUSES } from "@/lib/appointment-status";
 import type { BusinessType, TeamMode } from "@/lib/business-types";
 import type { TenantScope } from "./scope";
 
@@ -14,12 +15,30 @@ export class TooManyStaffError extends Error {
   }
 }
 
-/** Name, public link and time zone. Keeps organization.slug in sync. */
+/**
+ * Name, public link and time zone. Keeps organization.slug in sync. When the
+ * slug changes, the old one is kept as a redirect so shared links and the
+ * clients' private turno links keep working.
+ */
 export async function updateBusinessProfile(
   ctx: TenantScope,
   input: { name: string; slug: string; timezone: string },
 ) {
   await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select({ slug: businessSettings.slug })
+      .from(businessSettings)
+      .where(eq(businessSettings.organizationId, ctx.organization.id));
+    if (current && current.slug !== input.slug) {
+      await tx
+        .insert(slugRedirects)
+        .values({ slug: current.slug, organizationId: ctx.organization.id })
+        .onConflictDoNothing();
+      // Taking back one of its own old links: it's current again, not a redirect.
+      await tx
+        .delete(slugRedirects)
+        .where(and(eq(slugRedirects.slug, input.slug), eq(slugRedirects.organizationId, ctx.organization.id)));
+    }
     await tx
       .update(organization)
       .set({ name: input.name, slug: input.slug })
@@ -77,4 +96,53 @@ export async function ensureStaffForMember(ctx: TenantScope, memberId: string, n
     .values({ organizationId: ctx.organization.id, name, memberId })
     .returning({ id: staff.id });
   return created.id;
+}
+
+export async function updateBookingRules(
+  ctx: TenantScope,
+  input: {
+    autoConfirmBookings: boolean;
+    minNoticeMinutes: number;
+    maxDaysAhead: number;
+    slotIntervalMinutes: number;
+    bufferMinutes: number;
+    clientCancelNoticeHours: number;
+  },
+) {
+  await db.update(businessSettings).set(input).where(eq(businessSettings.organizationId, ctx.organization.id));
+}
+
+export async function updatePublicProfile(
+  ctx: TenantScope,
+  input: { publicPhone: string | null; address: string | null; description: string | null },
+) {
+  await db.update(businessSettings).set(input).where(eq(businessSettings.organizationId, ctx.organization.id));
+}
+
+export async function updateMembershipSettings(
+  ctx: TenantScope,
+  input: { graceDays: number; paymentReminderTemplate: string | null },
+) {
+  await db.update(businessSettings).set(input).where(eq(businessSettings.organizationId, ctx.organization.id));
+}
+
+/** What would be hidden by turning a product off (Configuración → Qué usás). */
+export async function productUsage(ctx: TenantScope, now = new Date()) {
+  const [[turnos], [memberships]] = await Promise.all([
+    db
+      .select({ n: count() })
+      .from(appointments)
+      .where(
+        and(
+          eq(appointments.organizationId, ctx.organization.id),
+          inArray(appointments.status, [...ACTIVE_STATUSES]),
+          gt(appointments.startsAt, now),
+        ),
+      ),
+    db
+      .select({ n: count() })
+      .from(enrollments)
+      .where(and(eq(enrollments.organizationId, ctx.organization.id), eq(enrollments.status, "active"))),
+  ]);
+  return { upcomingTurnos: turnos.n, activeMemberships: memberships.n };
 }

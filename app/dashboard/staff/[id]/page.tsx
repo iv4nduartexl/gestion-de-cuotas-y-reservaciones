@@ -14,6 +14,7 @@ import { EntityAvatar } from "@/components/ui-kit/entity-avatar";
 import { PageHeader } from "@/components/ui-kit/page-header";
 import { SectionCard } from "@/components/ui-kit/section-card";
 import { parseId, requireProduct } from "@/lib/actions";
+import { countUpcomingFor } from "@/lib/data/appointments";
 import { getStaff, listOrganizationMembers } from "@/lib/data/staff";
 import { can, getTenantContextOrRedirect } from "@/lib/tenant";
 
@@ -37,6 +38,7 @@ async function StaffDetail({ params }: { params: PageProps<"/dashboard/staff/[id
 
   const members = await listOrganizationMembers(ctx);
   const archived = person.archivedAt !== null;
+  const upcoming = archived ? 0 : await countUpcomingFor(ctx, { staffId: person.id });
 
   return (
     <>
@@ -51,7 +53,11 @@ async function StaffDetail({ params }: { params: PageProps<"/dashboard/staff/[id
               label={archived ? "Restaurar" : "Archivar"}
               title={archived ? "¿Restaurar persona?" : "¿Archivar persona?"}
               description={
-                archived ? "Vuelve a poder recibir turnos." : "Ya no va a poder recibir turnos nuevos. Su historial se conserva."
+                archived
+                  ? "Vuelve a poder recibir turnos."
+                  : upcoming > 0
+                    ? `Ya no va a recibir turnos nuevos. Tiene ${upcoming} turno${upcoming === 1 ? "" : "s"} próximo${upcoming === 1 ? "" : "s"}: no se cancelan, reasignalos o cancelalos desde la Agenda.`
+                    : "Ya no va a poder recibir turnos nuevos. Su historial se conserva."
               }
               successMessage={archived ? "Restaurado" : "Archivado"}
             />

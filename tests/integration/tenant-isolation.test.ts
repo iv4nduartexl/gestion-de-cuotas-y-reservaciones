@@ -65,7 +65,7 @@ describe("clients", () => {
     expect(await getClient(b, client.id)).toBeNull();
     expect((await listClients(b)).rows.map((row) => row.id)).not.toContain(client.id);
     expect(await updateClient(b, client.id, clientInput("+595981000099"))).toBeNull();
-    expect(await setClientArchived(b, client.id, true)).toBe(false);
+    expect((await setClientArchived(b, client.id, true, "2030-01-07")).ok).toBe(false);
 
     const unchanged = await getClient(a, client.id);
     expect(unchanged?.phone).toBe("+595981000001");

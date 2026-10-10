@@ -18,5 +18,25 @@ services:
       timeout: 5s
       retries: 10
 
+  # Optional scheduler for self-hosting: `docker compose --profile cron up -d`.
+  # Calls the app's job endpoint every 15 minutes (set CRON_URL and CRON_SECRET in .env).
+  cron:
+    image: curlimages/curl:8.11.1
+    profiles: ["cron"]
+    restart: unless-stopped
+    environment:
+      CRON_URL: ${CRON_URL:-http://host.docker.internal:3000}
+      CRON_SECRET: ${CRON_SECRET:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          curl -fsS -X POST -H "Authorization: Bearer $$CRON_SECRET" "$$CRON_URL/api/cron/run" || echo "cron run failed"
+          echo
+          sleep 900
+        done
+
 volumes:
   postgres_data:

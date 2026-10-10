@@ -3,7 +3,8 @@ import "server-only";
 import { and, asc, count, eq, ilike, isNotNull, isNull, or, type SQL } from "drizzle-orm";
 
 import { db } from "@/db";
-import { clients } from "@/db/schema";
+import { clients, enrollments } from "@/db/schema";
+import { pauseEnrollment } from "@/lib/data/enrollments";
 import type { ClientInput } from "@/lib/validation/clients";
 import { likePattern, PAGE_SIZE, type TenantScope } from "./scope";
 
@@ -68,11 +69,27 @@ export async function updateClient(ctx: TenantScope, id: string, input: ClientIn
   return row ?? null;
 }
 
-export async function setClientArchived(ctx: TenantScope, id: string, archived: boolean) {
+/**
+ * Archives or restores a client. Archiving pauses their active memberships,
+ * so an archived client is never billed or reminded about cuotas. Restoring
+ * leaves them paused: the owner resumes them on purpose from the client page.
+ */
+export async function setClientArchived(ctx: TenantScope, id: string, archived: boolean, today: string) {
   const rows = await db
     .update(clients)
     .set({ archivedAt: archived ? new Date() : null })
     .where(scoped(ctx, eq(clients.id, id)))
     .returning({ id: clients.id });
-  return rows.length > 0;
+  if (rows.length === 0) return { ok: false, pausedMemberships: 0 };
+  let pausedMemberships = 0;
+  if (archived) {
+    const active = await db
+      .select({ id: enrollments.id })
+      .from(enrollments)
+      .where(and(eq(enrollments.organizationId, ctx.organization.id), eq(enrollments.clientId, id), eq(enrollments.status, "active")));
+    for (const enrollment of active) {
+      if (await pauseEnrollment(ctx, enrollment.id, today)) pausedMemberships++;
+    }
+  }
+  return { ok: true, pausedMemberships };
 }

@@ -12,6 +12,7 @@ import { ServiceForm } from "@/components/services/service-form";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui-kit/page-header";
 import { parseId, requireProduct } from "@/lib/actions";
+import { countUpcomingFor } from "@/lib/data/appointments";
 import { capitalize, vocabularyFor } from "@/lib/business-types";
 import { getService } from "@/lib/data/services";
 import { listStaff } from "@/lib/data/staff";
@@ -43,6 +44,7 @@ async function ServiceDetail({
 
   const staffOptions = (await listStaff(ctx)).map(({ id, name }) => ({ id, name }));
   const archived = service.archivedAt !== null;
+  const upcoming = archived ? 0 : await countUpcomingFor(ctx, { serviceId: service.id });
 
   return (
     <>
@@ -64,7 +66,9 @@ async function ServiceDetail({
               description={
                 archived
                   ? "Se va a poder reservar de nuevo."
-                  : "Deja de aparecer para reservar. Los turnos que ya existen se conservan."
+                  : upcoming > 0
+                    ? `Deja de aparecer para reservar. Tiene ${upcoming} turno${upcoming === 1 ? "" : "s"} próximo${upcoming === 1 ? "" : "s"}: no se cancelan, revisalos en la Agenda.`
+                    : "Deja de aparecer para reservar. Los turnos que ya existen se conservan."
               }
               successMessage={archived ? "Restaurado" : "Archivado"}
             />

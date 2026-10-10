@@ -30,7 +30,13 @@ for (const user of Object.values(USERS)) {
 
     await page.getByRole("button", { name: "Crear mi negocio" }).click();
     await expect(page).toHaveURL(/\/dashboard/);
-    await expect(page.getByText("¡Tu negocio está creado!")).toBeVisible();
+    // The welcome tour explains what Agenda does for this kind of business.
+    const tour = page.getByRole("dialog");
+    await expect(tour.getByText("¡Tu negocio está creado!")).toBeVisible();
+    await expect(tour.getByRole("heading")).toHaveText(hasAppointments ? /reservan solos/ : /quién pagó y quién debe/);
+    await tour.getByRole("button", { name: "Saltar" }).click();
+    await expect(tour).toBeHidden();
+    await expect(page).toHaveURL(/\/dashboard$/);
     await expect(page.getByRole("heading", { name: "Guía de configuración" })).toBeVisible();
 
     await page.context().storageState({ path: user.storageState });

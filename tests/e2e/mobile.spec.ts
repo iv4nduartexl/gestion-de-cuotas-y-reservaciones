@@ -11,6 +11,6 @@ test("phones navigate with the bottom tab bar", async ({ page }) => {
   await tabs.getByRole("link", { name: "Clientes" }).click();
   await expect(page).toHaveURL(/\/dashboard\/clients$/);
   await expect(tabs.getByRole("link", { name: "Clientes" })).toHaveAttribute("aria-current", "page");
-  await tabs.getByRole("link", { name: "Horarios" }).click();
-  await expect(page.getByRole("heading", { name: "Horarios", level: 1 })).toBeVisible();
+  await tabs.getByRole("link", { name: "Agenda" }).click();
+  await expect(page.getByRole("heading", { name: "Agenda", level: 1 })).toBeVisible();
 });

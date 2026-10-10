@@ -192,7 +192,7 @@ export function OnboardingWizard({
                   <ProductToggle
                     icon={WalletIcon}
                     title="Cuotas y membresías"
-                    description="Controlá quién pagó y quién debe la cuota del mes. Muy pronto; ya podés ir cargando tus clientes."
+                    description="Controlá quién pagó y quién debe la cuota del mes, con recordatorios antes de que venza."
                     checked={memberships}
                     onCheckedChange={setMemberships}
                   />

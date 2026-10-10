@@ -14,13 +14,12 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { roleLabels } from "@/lib/auth/permissions";
 import { BUSINESS_TYPE_INFO } from "@/lib/business-types";
-import { buildNavigation } from "@/lib/navigation";
+import { getNavigation } from "@/lib/data/navigation";
 import { getTenantContextOrRedirect, listUserOrganizations } from "@/lib/tenant";
 
 export async function AppSidebar() {
   const ctx = await getTenantContextOrRedirect();
-  const organizations = await listUserOrganizations(ctx.user.id);
-  const navigation = buildNavigation(ctx.settings);
+  const [organizations, navigation] = await Promise.all([listUserOrganizations(ctx.user.id), getNavigation(ctx)]);
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -35,10 +34,9 @@ export async function AppSidebar() {
         />
       </SidebarHeader>
       <SidebarContent className="px-1">
-        <NavMain items={navigation.main} />
+        <NavMain groups={navigation.groups} />
       </SidebarContent>
       <SidebarFooter className="gap-2 px-3 pb-4">
-        <NavMain items={[navigation.settings]} />
         <div className="border-t border-sidebar-border pt-2">
           <NavUser user={ctx.user} roleLabel={roleLabels[ctx.role]} />
         </div>

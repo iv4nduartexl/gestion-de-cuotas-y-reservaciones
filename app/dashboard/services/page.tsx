@@ -7,6 +7,7 @@ import { ListSkeleton } from "@/components/dashboard/list-skeleton";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui-kit/empty-state";
+import { sectionHelp } from "@/lib/help-content";
 import { PageHeader } from "@/components/ui-kit/page-header";
 import { requireProduct } from "@/lib/actions";
 import { capitalize, vocabularyFor } from "@/lib/business-types";
@@ -42,6 +43,7 @@ async function ServiceList() {
   return (
     <>
       <PageHeader
+        help={{ section: "services", settings: ctx.settings, open: rows.length === 0 }}
         title={capitalize(words.service.many)}
         description={`Lo que tus ${words.client.many} pueden reservar, con su duración y su precio.`}
         actions={rows.length > 0 && newButton}
@@ -50,7 +52,7 @@ async function ServiceList() {
         <EmptyState
           icon={ScissorsIcon}
           title={`Todavía no cargaste ${words.service.many}`}
-          description={`Cada ${words.service.one} tiene una duración (cuánto tiempo se reserva en tu agenda) y un precio. Por ejemplo: “Corte clásico · 30 min · Gs. 50.000”.`}
+          description={`Cada ${words.service.one} tiene una duración (cuánto tiempo se reserva en tu agenda) y un precio. Por ejemplo: “${sectionHelp("services", ctx.settings).example}”.`}
           action={newButton}
         />
       ) : (

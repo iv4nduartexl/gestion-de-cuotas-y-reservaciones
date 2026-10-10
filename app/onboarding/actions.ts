@@ -10,6 +10,7 @@ import { db } from "@/db";
 import { businessSettings, organization, staff } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { DEFAULT_CURRENCY } from "@/lib/constants";
+import { slugOwner } from "@/lib/data/slugs";
 import { isUniqueViolation } from "@/lib/db-errors";
 import { SLUG_MAX_LENGTH, SLUG_MIN_LENGTH, slugify, slugSchema } from "@/lib/slug";
 import { parseForm, type FieldErrors } from "@/lib/forms";
@@ -125,17 +126,5 @@ async function findAvailableSlug(base: string) {
 }
 
 async function isSlugTaken(slug: string) {
-  const [orgMatch, settingsMatch] = await Promise.all([
-    db
-      .select({ id: organization.id })
-      .from(organization)
-      .where(eq(organization.slug, slug))
-      .limit(1),
-    db
-      .select({ id: businessSettings.organizationId })
-      .from(businessSettings)
-      .where(eq(businessSettings.slug, slug))
-      .limit(1),
-  ]);
-  return orgMatch.length > 0 || settingsMatch.length > 0;
+  return (await slugOwner(slug)) !== null;
 }

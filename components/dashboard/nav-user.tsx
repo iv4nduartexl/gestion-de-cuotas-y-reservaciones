@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronsUpDownIcon, LogOutIcon } from "lucide-react";
+import { ChevronsUpDownIcon, CircleHelpIcon, LogOutIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -29,7 +29,7 @@ export function NavUser({
   roleLabel: string;
 }) {
   const router = useRouter();
-  const { isMobile } = useSidebar();
+  const { isMobile, setOpenMobile } = useSidebar();
 
   async function signOut() {
     await authClient.signOut();
@@ -73,6 +73,15 @@ export function NavUser({
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => {
+                setOpenMobile(false);
+                router.push("/dashboard?bienvenida=1");
+              }}
+            >
+              <CircleHelpIcon />
+              ¿Qué hace Agenda?
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={signOut}>
               <LogOutIcon />
               Cerrar sesión

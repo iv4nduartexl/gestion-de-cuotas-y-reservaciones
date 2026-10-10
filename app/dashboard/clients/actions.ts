@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { authorizeAction, FORBIDDEN, parseId, type ActionState } from "@/lib/actions";
 import { createClient, setClientArchived, updateClient } from "@/lib/data/clients";
+import { todayInZone } from "@/lib/datetime";
 import { isUniqueViolation } from "@/lib/db-errors";
 import { withFlash } from "@/lib/flash";
 import { parseForm } from "@/lib/forms";
@@ -62,6 +63,6 @@ export async function setClientArchivedAction(clientId: string, archived: boolea
   const ctx = await authorizeAction({ client: ["archive"] });
   const id = parseId(clientId);
   if (!ctx || !id) return;
-  await setClientArchived(ctx, id, archived);
+  await setClientArchived(ctx, id, archived, todayInZone(ctx.settings.timezone));
   refresh();
 }

@@ -6,6 +6,7 @@ import { asc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { APP_NAME } from "@/lib/brand";
+import { CLIENT_IP_HEADERS } from "@/lib/client-ip";
 import * as schema from "@/db/schema";
 import { sendEmail } from "@/lib/email";
 import { resetPasswordEmail, verificationEmail } from "@/lib/email/templates";
@@ -23,11 +24,14 @@ export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   secret: env.BETTER_AUTH_SECRET,
   database: drizzleAdapter(db, { provider: "pg", schema }),
-  // Organizations are created/updated only through our server actions, which
-  // also maintain `business_settings`. Blocks the public HTTP endpoints;
-  // `auth.api.*` calls on the server are unaffected.
-  disabledPaths: ["/organization/create", "/organization/update"],
-  ...(env.AUTH_RATE_LIMIT === "off" && { rateLimit: { enabled: false } }),
+  // Organizations are created/updated/deleted only through our server
+  // actions, which also maintain `business_settings` (and give deletion a
+  // grace period). Blocks the public HTTP endpoints; `auth.api.*` calls on the
+  // server are unaffected.
+  disabledPaths: ["/organization/create", "/organization/update", "/organization/delete"],
+  ...(env.RATE_LIMITS === "off" && { rateLimit: { enabled: false } }),
+  // Behind Caddy: the client IP comes from X-Real-IP (see lib/client-ip.ts).
+  advanced: { ipAddress: { ipAddressHeaders: CLIENT_IP_HEADERS } },
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,

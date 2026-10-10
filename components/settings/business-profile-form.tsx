@@ -35,7 +35,7 @@ export function BusinessProfileForm({
         id="slug"
         label="Link de reservas"
         error={errors.slug}
-        hint="Si lo cambiás, el link anterior deja de funcionar."
+        hint="Si lo cambiás, el link anterior sigue funcionando y lleva al nuevo."
       >
         <InputGroup prefix={`${appHost}/`} invalid={!!errors.slug}>
           <input
@@ -50,7 +50,12 @@ export function BusinessProfileForm({
           />
         </InputGroup>
       </Field>
-      <Field id="timezone" label="Zona horaria" error={errors.timezone}>
+      <Field
+        id="timezone"
+        label="Zona horaria"
+        error={errors.timezone}
+        hint="Cambiala solo si tu negocio está en otro país: tus horarios de atención se van a leer en la nueva zona."
+      >
         <NativeSelect id="timezone" name="timezone" className="w-full" defaultValue={timezone}>
           <NativeSelectOptGroup label="Más usadas">
             {FEATURED_TIME_ZONES.map((zone) => (

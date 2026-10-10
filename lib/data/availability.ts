@@ -1,9 +1,11 @@
 import "server-only";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, or } from "drizzle-orm";
 
 import { db } from "@/db";
-import { availabilityRules, staff } from "@/db/schema";
+import { appointments, availabilityRules, blockedSlots, staff } from "@/db/schema";
+import { ACTIVE_STATUSES } from "@/lib/appointment-status";
+import type { StaffAvailability } from "@/lib/availability";
 import { toHHmm } from "@/lib/datetime";
 import type { AvailabilityRuleInput } from "@/lib/validation/staff";
 import { InvalidReferenceError, type TenantScope } from "./scope";
@@ -64,4 +66,75 @@ export async function replaceWeeklySchedule(
       );
     }
   });
+}
+
+/**
+ * Everything the availability engine needs for these staff members between
+ * `from` and `to`: weekly hours, días libres (theirs + business-wide) and
+ * active turnos.
+ */
+export async function loadStaffAvailability(
+  ctx: TenantScope,
+  { staffIds, from, to }: { staffIds: string[]; from: Date; to: Date },
+): Promise<StaffAvailability[]> {
+  if (staffIds.length === 0) return [];
+  const org = ctx.organization.id;
+  const [rules, blocks, busy] = await Promise.all([
+    db
+      .select({
+        staffId: availabilityRules.staffId,
+        weekday: availabilityRules.weekday,
+        startTime: availabilityRules.startTime,
+        endTime: availabilityRules.endTime,
+      })
+      .from(availabilityRules)
+      .where(and(eq(availabilityRules.organizationId, org), inArray(availabilityRules.staffId, staffIds))),
+    db
+      .select({ staffId: blockedSlots.staffId, startsAt: blockedSlots.startsAt, endsAt: blockedSlots.endsAt })
+      .from(blockedSlots)
+      .where(
+        and(
+          eq(blockedSlots.organizationId, org),
+          or(isNull(blockedSlots.staffId), inArray(blockedSlots.staffId, staffIds)),
+          lt(blockedSlots.startsAt, to),
+          gt(blockedSlots.endsAt, from),
+        ),
+      ),
+    db
+      .select({ staffId: appointments.staffId, startsAt: appointments.startsAt, endsAt: appointments.endsAt })
+      .from(appointments)
+      .where(
+        and(
+          eq(appointments.organizationId, org),
+          inArray(appointments.staffId, staffIds),
+          inArray(appointments.status, [...ACTIVE_STATUSES]),
+          lt(appointments.startsAt, to),
+          gt(appointments.endsAt, from),
+        ),
+      ),
+  ]);
+
+  const interval = (row: { startsAt: Date; endsAt: Date }) => ({
+    start: row.startsAt.getTime(),
+    end: row.endsAt.getTime(),
+  });
+
+  return staffIds.map((staffId) => ({
+    staffId,
+    rules: rules
+      .filter((rule) => rule.staffId === staffId)
+      .map((rule) => ({ weekday: rule.weekday, startTime: toHHmm(rule.startTime), endTime: toHHmm(rule.endTime) })),
+    blocks: blocks.filter((block) => block.staffId === null || block.staffId === staffId).map(interval),
+    busy: busy.filter((turno) => turno.staffId === staffId).map(interval),
+  }));
+}
+
+/** Staff ids that have at least one weekly rule. */
+export async function staffWithHours(ctx: TenantScope, staffIds: string[]) {
+  if (staffIds.length === 0) return new Set<string>();
+  const rows = await db
+    .selectDistinct({ staffId: availabilityRules.staffId })
+    .from(availabilityRules)
+    .where(and(eq(availabilityRules.organizationId, ctx.organization.id), inArray(availabilityRules.staffId, staffIds)));
+  return new Set(rows.map((row) => row.staffId));
 }

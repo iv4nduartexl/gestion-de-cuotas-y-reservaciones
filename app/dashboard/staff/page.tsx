@@ -41,6 +41,7 @@ async function StaffList() {
   return (
     <>
       <PageHeader
+        help={{ section: "team", settings: ctx.settings, open: rows.length <= 1 }}
         title="Equipo"
         description={`Los ${words.staff.many} que atienden turnos. Cada uno tiene su propio horario.`}
         actions={addButton}

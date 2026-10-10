@@ -39,7 +39,7 @@ export function ClientForm({
 
       <SectionCard
         title="Contacto"
-        description={`Con el teléfono vas a poder escribirle por WhatsApp y, más adelante, enviarle recordatorios.`}
+        description={`Con el teléfono le escribís por WhatsApp con un toque. Si cargás su correo, los recordatorios le llegan solos.`}
       >
         <div className="grid gap-5">
           <FormField

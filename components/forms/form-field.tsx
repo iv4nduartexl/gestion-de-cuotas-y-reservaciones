@@ -11,14 +11,16 @@ type FormFieldProps = ComponentProps<typeof Input> & {
   optional?: boolean;
 };
 
-export function FormField({ name, label, error, hint, optional, ...props }: FormFieldProps) {
+/** Labelled input. The id defaults to the name; pass `id` when a form repeats on a page. */
+export function FormField({ name, label, error, hint, optional, id, ...props }: FormFieldProps) {
+  const inputId = id ?? name;
   return (
-    <Field id={name} label={label} error={error} hint={hint} optional={optional}>
+    <Field id={inputId} label={label} error={error} hint={hint} optional={optional}>
       <Input
-        id={name}
+        id={inputId}
         name={name}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${name}-error` : undefined}
+        aria-describedby={error ? `${inputId}-error` : undefined}
         {...props}
       />
     </Field>

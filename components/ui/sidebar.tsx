@@ -162,7 +162,11 @@ function Sidebar({
   variant?: "sidebar" | "floating" | "inset"
   collapsible?: "offcanvas" | "icon" | "none"
 }) {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+  const { state, openMobile, setOpenMobile } = useSidebar()
+  // Read the media query here rather than from context: this component can
+  // hydrate later than the provider (inside a Suspense boundary), and must
+  // start from the server value to avoid a hydration mismatch on phones.
+  const isMobile = useIsMobile()
 
   if (collapsible === "none") {
     return (

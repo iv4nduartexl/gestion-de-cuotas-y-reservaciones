@@ -1,0 +1,23 @@
+# HTTPS certificates are obtained and renewed automatically (Let's Encrypt).
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Payment webhooks are small JSON events.
+	request_body /api/payments/* {
+		max_size 64KB
+	}
+	# Image uploads (logo/cover) are resized server-side; 6 MB is plenty.
+	request_body {
+		max_size 6MB
+	}
+
+	reverse_proxy app:3000 {
+		# The real client IP, taken from the TCP connection (can't be forged).
+		header_up X-Real-IP {remote_host}
+	}
+}
