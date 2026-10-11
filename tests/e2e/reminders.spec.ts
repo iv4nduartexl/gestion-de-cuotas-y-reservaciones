@@ -113,7 +113,7 @@ test("the job plans reminders: email ones go out, WhatsApp ones wait in the tray
 });
 
 test("settings decide what gets planned", async ({ page }) => {
-  await page.goto("/dashboard/settings?seccion=recordatorios");
+  await page.goto("/dashboard/settings?seccion=recordatorios&editar=recordatorios");
   const section = page.locator("section").filter({ has: page.getByRole("heading", { name: "Recordatorios", exact: true }) });
   const dayBefore = section.getByRole("switch", { name: "Recordar el día anterior" });
   await expect(dayBefore).toBeChecked();
@@ -130,7 +130,7 @@ test("settings decide what gets planned", async ({ page }) => {
   await expect(page.getByText("Nico Sinaviso")).toHaveCount(0);
 
   // Back on: the next run plans it, with the custom text.
-  await page.goto("/dashboard/settings?seccion=recordatorios");
+  await page.goto("/dashboard/settings?seccion=recordatorios&editar=recordatorios");
   await section.getByRole("switch", { name: "Recordar el día anterior" }).click();
   await section.getByRole("button", { name: "Guardar" }).click();
   await expect(page.getByText("Recordatorios guardados")).toBeVisible();

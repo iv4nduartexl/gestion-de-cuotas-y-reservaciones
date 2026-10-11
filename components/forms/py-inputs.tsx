@@ -7,7 +7,6 @@ import { es } from "react-day-picker/locale";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { groupedInputClassName, InputGroup } from "@/components/ui-kit/input-group";
 import { formatCalendarDate } from "@/lib/datetime";
@@ -37,14 +36,23 @@ function useMaskedValue(initial: string, mask: (raw: string) => string) {
 }
 
 /** Guaraníes with live thousand dots: 1250000 -> "1.250.000". */
-export function MoneyInput({ defaultValue = "", invalid, prefix = "Gs.", ...props }: NativeInputProps & { prefix?: string }) {
+export function MoneyInput({
+  defaultValue = "",
+  invalid,
+  prefix = "Gs.",
+  onValueChange,
+  ...props
+}: NativeInputProps & { prefix?: string; /** The masked text after each change ("1.250.000"). */ onValueChange?: (value: string) => void }) {
   const masked = useMaskedValue(defaultValue, maskGuaranies);
   return (
     <InputGroup prefix={prefix} invalid={invalid}>
       <input
         {...props}
         value={masked.value}
-        onChange={masked.onChange}
+        onChange={(event) => {
+          masked.onChange(event);
+          onValueChange?.(maskGuaranies(event.target.value));
+        }}
         inputMode="numeric"
         autoComplete="off"
         aria-invalid={invalid || undefined}
@@ -55,14 +63,22 @@ export function MoneyInput({ defaultValue = "", invalid, prefix = "Gs.", ...prop
 }
 
 /** Paraguayan phone: "0981 123 456". The server normalizes to +595… */
-export function PhoneInput({ defaultValue = "", invalid, ...props }: NativeInputProps) {
+export function PhoneInput({
+  defaultValue = "",
+  invalid,
+  onValueChange,
+  ...props
+}: NativeInputProps & { /** The masked text after each change. */ onValueChange?: (value: string) => void }) {
   const masked = useMaskedValue(defaultValue, maskPhone);
   return (
     <InputGroup prefix="PY" invalid={invalid}>
       <input
         {...props}
         value={masked.value}
-        onChange={masked.onChange}
+        onChange={(event) => {
+          masked.onChange(event);
+          onValueChange?.(maskPhone(event.target.value));
+        }}
         type="tel"
         inputMode="tel"
         autoComplete="tel"
@@ -75,13 +91,22 @@ export function PhoneInput({ defaultValue = "", invalid, ...props }: NativeInput
 }
 
 /** Cédula: "4.567.890" (letters allowed for foreign documents). */
-export function CiInput({ defaultValue = "", invalid, className, ...props }: NativeInputProps) {
+export function CiInput({
+  defaultValue = "",
+  invalid,
+  className,
+  onValueChange,
+  ...props
+}: NativeInputProps & { onValueChange?: (value: string) => void }) {
   const masked = useMaskedValue(defaultValue, maskCi);
   return (
     <Input
       {...props}
       value={masked.value}
-      onChange={masked.onChange}
+      onChange={(event) => {
+        masked.onChange(event);
+        onValueChange?.(maskCi(event.target.value));
+      }}
       inputMode="text"
       autoComplete="off"
       placeholder={props.placeholder ?? "4.567.890"}
@@ -151,36 +176,3 @@ export function DatePicker({
   );
 }
 
-/** 24 h times in 15-minute steps ("08:00", "08:15", …), never AM/PM. */
-export const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
-  const hours = String(Math.floor(i / 4)).padStart(2, "0");
-  const minutes = String((i % 4) * 15).padStart(2, "0");
-  return `${hours}:${minutes}`;
-});
-
-export function TimeSelect({
-  value,
-  onChange,
-  className,
-  ...props
-}: Omit<ComponentProps<typeof NativeSelect>, "value" | "onChange"> & {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  // Keep values that aren't on the 15-minute grid (e.g. older data) selectable.
-  const options = TIME_OPTIONS.includes(value) || !value ? TIME_OPTIONS : [...TIME_OPTIONS, value].sort();
-  return (
-    <NativeSelect
-      {...props}
-      className={cn("w-28", className)}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {options.map((time) => (
-        <NativeSelectOption key={time} value={time}>
-          {time}
-        </NativeSelectOption>
-      ))}
-    </NativeSelect>
-  );
-}

@@ -2,22 +2,22 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
-import {
-  setServiceArchivedAction,
-  updateServiceAction,
-} from "@/app/dashboard/services/actions";
+import { setServiceArchivedAction } from "@/app/dashboard/services/actions";
 import { ListSkeleton } from "@/components/dashboard/list-skeleton";
 import { ConfirmActionButton } from "@/components/forms/confirm-action-button";
-import { ServiceForm } from "@/components/services/service-form";
+import { FormMessage } from "@/components/forms/form-message";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui-kit/page-header";
+import { SummaryCard } from "@/components/wizard/summary-card";
 import { parseId, requireProduct } from "@/lib/actions";
-import { countUpcomingFor } from "@/lib/data/appointments";
 import { capitalize, vocabularyFor } from "@/lib/business-types";
-import { getService } from "@/lib/data/services";
+import { countUpcomingFor } from "@/lib/data/appointments";
+import { findServiceProblems, getService } from "@/lib/data/services";
 import { listStaff } from "@/lib/data/staff";
 import { formatDuration } from "@/lib/datetime";
-import { currencyPrefix, formatAmountInput, formatMoney } from "@/lib/money";
+import { formatMoney } from "@/lib/money";
+import { STAY_UNIT_WORDS } from "@/lib/service-constants";
+import { priceSuffix, serviceSummary } from "@/lib/service-format";
 import { can, getTenantContextOrRedirect } from "@/lib/tenant";
 
 export const metadata: Metadata = { title: "Servicio" };
@@ -30,11 +30,7 @@ export default function ServicePage({ params }: PageProps<"/dashboard/services/[
   );
 }
 
-async function ServiceDetail({
-  params,
-}: {
-  params: PageProps<"/dashboard/services/[id]">["params"];
-}) {
+async function ServiceDetail({ params }: { params: PageProps<"/dashboard/services/[id]">["params"] }) {
   const ctx = await getTenantContextOrRedirect();
   requireProduct(ctx, "appointments");
   const words = vocabularyFor(ctx.settings.businessType);
@@ -42,19 +38,62 @@ async function ServiceDetail({
   const service = id ? await getService(ctx, id) : null;
   if (!service) notFound();
 
-  const staffOptions = (await listStaff(ctx)).map(({ id, name }) => ({ id, name }));
   const archived = service.archivedAt !== null;
-  const upcoming = archived ? 0 : await countUpcomingFor(ctx, { serviceId: service.id });
+  const [problems, upcoming, staffRows] = await Promise.all([
+    archived ? Promise.resolve(new Map<string, string>()) : findServiceProblems(ctx),
+    archived ? Promise.resolve(0) : countUpcomingFor(ctx, { serviceId: service.id }),
+    listStaff(ctx),
+  ]);
+  const problem = problems.get(service.id);
+  const editable = can(ctx, { service: ["update"] }) && !archived;
+  const edit = (step: string) => (editable ? `/dashboard/services/${service.id}/editar?paso=${step}` : undefined);
+  const money = (amount: number | null) => (amount === null ? "—" : formatMoney(amount, service.currency));
+  const isStay = service.bookingType === "stay";
+  const unit = service.stayUnit ?? "night";
+
+  const rows = [
+    { label: "Cómo se reserva", value: isStay ? "Por días (alquiler)" : "Por horario (turnos)", href: edit("tipo") },
+    { label: "Nombre", value: <span className="flex flex-col">{service.name}{service.description && <span className="text-sm font-normal text-muted-foreground">{service.description}</span>}</span>, href: edit("nombre") },
+    ...(isStay
+      ? [
+          { label: "Se cobra por", value: `${STAY_UNIT_WORDS[unit][0]}`, href: edit("cobro") },
+          { label: "Entrada y salida", value: `Entra desde las ${service.checkInTime} · sale hasta las ${service.checkOutTime}`, href: edit("horas") },
+          {
+            label: "Estadía",
+            value: `Mínimo ${service.minStay} ${STAY_UNIT_WORDS[unit][service.minStay === 1 ? 0 : 1]}${service.maxStay ? ` · máximo ${service.maxStay}` : " · sin máximo"}`,
+            href: edit("estadia"),
+          },
+          {
+            label: "Precio",
+            value: `${money(service.price)} por ${STAY_UNIT_WORDS[unit][0]}${service.weeklyPrice ? ` · ${money(service.weeklyPrice)} por semana` : ""}${service.monthlyPrice ? ` · ${money(service.monthlyPrice)} por mes` : ""}`,
+            href: edit("precio"),
+          },
+        ]
+      : [
+          { label: "Duración", value: formatDuration(service.durationMinutes ?? 0), href: edit("duracion") },
+          { label: "Precio", value: money(service.price), href: edit("precio") },
+          ...(ctx.settings.teamMode === "team"
+            ? [
+                {
+                  label: "Lo hacen",
+                  value: staffRows.filter((person) => service.staffIds.includes(person.id)).map((person) => person.name).join(", ") || "Nadie todavía",
+                  href: edit("quien"),
+                },
+              ]
+            : []),
+        ]),
+  ];
 
   return (
     <>
       <PageHeader
         back={{ href: "/dashboard/services", label: capitalize(words.service.many) }}
         title={service.name}
-        meta={archived && <Badge variant="neutral">Archivado</Badge>}
+        meta={archived ? <Badge variant="neutral">Archivado</Badge> : problem ? <Badge variant="coral">Necesita arreglo</Badge> : null}
         description={
           <span className="tabular">
-            {formatDuration(service.durationMinutes)} · {formatMoney(service.price, service.currency)}
+            {serviceSummary(service)} · {formatMoney(service.price, service.currency)}
+            {priceSuffix(service)}
           </span>
         }
         actions={
@@ -67,33 +106,20 @@ async function ServiceDetail({
                 archived
                   ? "Se va a poder reservar de nuevo."
                   : upcoming > 0
-                    ? `Deja de aparecer para reservar. Tiene ${upcoming} turno${upcoming === 1 ? "" : "s"} próximo${upcoming === 1 ? "" : "s"}: no se cancelan, revisalos en la Agenda.`
-                    : "Deja de aparecer para reservar. Los turnos que ya existen se conservan."
+                    ? `Deja de aparecer para reservar. Tiene ${upcoming} reserva${upcoming === 1 ? "" : "s"} próxima${upcoming === 1 ? "" : "s"}: no se cancelan, revisalas en la Agenda.`
+                    : "Deja de aparecer para reservar. Las reservas que ya existen se conservan."
               }
               successMessage={archived ? "Restaurado" : "Archivado"}
             />
           )
         }
       />
-      {can(ctx, { service: ["update"] }) ? (
-        <ServiceForm
-          action={updateServiceAction.bind(null, service.id)}
-          service={{
-            ...service,
-            priceInput: formatAmountInput(service.price, service.currency),
-            // Archived staff can't be assigned; drop them from the selection.
-            staffIds: service.staffIds.filter((staffId) => staffOptions.some((option) => option.id === staffId)),
-          }}
-          staffOptions={staffOptions}
-          showStaff={ctx.settings.teamMode === "team"}
-          staffNoun={words.staff.many}
-          serviceNoun={words.service.one}
-          currencyPrefix={currencyPrefix(service.currency)}
-          submitLabel="Guardar cambios"
-        />
-      ) : (
-        <p className="text-sm text-muted-foreground">No tenés permiso para editar {words.service.many}.</p>
+      {problem && (
+        <FormMessage type="warning">
+          <strong>Así no se puede reservar:</strong> {problem} Mientras tanto no aparece en tu página de reservas. Tocá “Cambiar” en la línea que corresponde.
+        </FormMessage>
       )}
+      <SummaryCard rows={rows} />
     </>
   );
 }

@@ -4,7 +4,7 @@ import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { authorizeAction, FORBIDDEN, parseId, type ActionState } from "@/lib/actions";
-import { createClient, setClientArchived, updateClient } from "@/lib/data/clients";
+import { createClient, listClients, setClientArchived, updateClient } from "@/lib/data/clients";
 import { todayInZone } from "@/lib/datetime";
 import { isUniqueViolation } from "@/lib/db-errors";
 import { withFlash } from "@/lib/flash";
@@ -65,4 +65,12 @@ export async function setClientArchivedAction(clientId: string, archived: boolea
   if (!ctx || !id) return;
   await setClientArchived(ctx, id, archived, todayInZone(ctx.settings.timezone));
   refresh();
+}
+
+/** Client search for pickers ("Nuevo turno", "Nuevo cobro"). */
+export async function searchClientsAction(query: string) {
+  const ctx = await authorizeAction({ client: ["create"] });
+  if (!ctx) return [];
+  const { rows } = await listClients(ctx, { q: query.slice(0, 100) });
+  return rows.slice(0, 8).map((client) => ({ id: client.id, name: client.name, phone: client.phone }));
 }

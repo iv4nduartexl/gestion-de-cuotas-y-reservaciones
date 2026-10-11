@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { exampleServices, sectionHelp } from "@/lib/help-content";
-import { allNavItems, buildNavigation, mobileTabs, patchNavItem } from "@/lib/navigation";
+import { allNavItems, buildNavigation, headerItems, mobileTabs, patchNavItem, setupSections } from "@/lib/navigation";
 import { pendingSetupSections, setupSteps, type SetupStatus } from "@/lib/setup-steps";
 
 const gym = { businessType: "gimnasio", teamMode: "solo", appointmentsEnabled: false, membershipsEnabled: true } as const;
@@ -28,15 +28,14 @@ describe("section help", () => {
 });
 
 describe("navigation", () => {
-  it("splits daily work from setup and hides unused sections", () => {
+  it("shows only daily work plus “Mi negocio”, which holds the setup sections", () => {
     const nav = buildNavigation(gym);
-    expect(nav.groups.map((g) => g.label)).toEqual(["Tu día", "Tu negocio"]);
-    expect(nav.groups[0].items.map((i) => i.label)).toEqual(["Inicio", "Cuotas", "Recordatorios", "Socios"]);
-    expect(nav.groups[1].items.map((i) => i.label)).toEqual(["Planes", "Configuración"]);
+    expect(allNavItems(nav).map((i) => i.label)).toEqual(["Inicio", "Cuotas", "Recordatorios", "Socios", "Mi negocio"]);
     expect(allNavItems(nav).every((item) => item.subtitle.length > 0)).toBe(true);
-
-    const team = buildNavigation(both);
-    expect(team.groups[1].items.map((i) => i.icon)).toEqual(["services", "schedule", "team", "plans", "settings"]);
+    expect(setupSections(gym)).toEqual(["plans", "settings"]);
+    expect(setupSections(both)).toEqual(["schedule", "services", "team", "plans", "settings"]);
+    // The header still knows every page's name.
+    expect(headerItems(barber).map((i) => i.label)).toContain("Horarios");
   });
 
   it("phone tabs take the four most used sections", () => {

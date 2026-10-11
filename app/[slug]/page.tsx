@@ -47,7 +47,7 @@ async function Booking({ params }: { params: PageProps<"/[slug]">["params"] }) {
         address={settings.address}
         publicPhone={settings.publicPhone}
       />
-      {catalog.services.length === 0 ? (
+      {catalog.services.length === 0 && catalog.stays.length === 0 ? (
         <EmptyState
           icon={CalendarClockIcon}
           title="Todavía no hay turnos disponibles"
@@ -57,7 +57,9 @@ async function Booking({ params }: { params: PageProps<"/[slug]">["params"] }) {
         <BookingFlow
           slug={slug}
           services={catalog.services}
+          stays={catalog.stays}
           staff={catalog.staff}
+          timeZone={settings.timezone}
           showStaffStep={settings.teamMode === "team"}
           today={todayInZone(settings.timezone)}
           autoConfirm={settings.autoConfirmBookings}

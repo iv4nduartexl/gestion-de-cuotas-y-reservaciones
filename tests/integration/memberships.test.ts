@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/db";
 import { charges, enrollments } from "@/db/schema";
-import { getCharge, listCharges, monthSummary, PaymentError, recordPayment, syncCharges, deletePayment, voidCharge } from "@/lib/data/charges";
+import { createOneOffCharge, getCharge, listCharges, monthSummary, PaymentError, recordPayment, syncCharges, deletePayment, voidCharge } from "@/lib/data/charges";
 import { createClient } from "@/lib/data/clients";
 import { AlreadyEnrolledError, cancelEnrollment, enroll, pauseEnrollment, resumeEnrollment } from "@/lib/data/enrollments";
 import { createPlan, getPlan, listPlans } from "@/lib/data/plans";
@@ -24,7 +24,7 @@ async function member(t: Tenant, name = "Socio") {
 }
 
 async function monthlyPlan(t: Tenant, price = 150000) {
-  return createPlan(t, { name: "Mensual", description: null, price, intervalUnit: "month", intervalCount: 1 });
+  return createPlan(t, { name: "Mensual", description: null, price, intervalUnit: "month", intervalCount: 1, billingTiming: "advance" });
 }
 
 async function chargesOf(enrollmentId: string) {
@@ -188,5 +188,46 @@ describe("tenant isolation", () => {
     expect(isForeignKeyViolation(error)).toBe(true);
     const rows = await db.select().from(enrollments).where(and(eq(enrollments.organizationId, a.organization.id), eq(enrollments.planId, planB.id)));
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("one-off charges (Nuevo cobro)", () => {
+  it("creates a one-off charge that lists, pays and searches like a cuota", async () => {
+    const client = await member(a, "Matriculado");
+    const id = await createOneOffCharge(a, { clientId: client.id, concept: "Matrícula", amount: 80000, dueDate: TODAY, note: null });
+    const charge = await getCharge(a, id, TODAY);
+    expect(charge).toMatchObject({ kind: "one_off", enrollmentId: null, periodStart: null, planName: "Matrícula", derived: "pendiente" });
+    const { rows } = await listCharges(a, { filter: "todas", q: "matríc", today: TODAY });
+    expect(rows.map((r) => r.id)).toContain(id);
+    expect((await recordPayment(a, { chargeId: id, amount: 80000, method: "efectivo", paidOn: TODAY, reference: null, userId: null })).fullyPaid).toBe(true);
+  });
+
+  it("rolls back a new client when the charge fails in the same transaction", async () => {
+    const phone = "+595981777001";
+    await expect(
+      db.transaction(async (tx) => {
+        const client = await createClient(a, { name: "Medio Hecho", phone, email: null, documentNumber: null, notes: null }, tx);
+        await createOneOffCharge(b, { clientId: client.id, concept: "Matrícula", amount: 1000, dueDate: TODAY, note: null }, tx);
+      }),
+    ).rejects.toBeInstanceOf(InvalidReferenceError);
+    // Nothing was kept: the phone is free again.
+    const again = await createClient(a, { name: "Medio Hecho", phone, email: null, documentNumber: null, notes: null });
+    expect(again.phone).toBe(phone);
+  });
+
+  it("another business can't charge or see the client", async () => {
+    const client = await member(a);
+    await expect(createOneOffCharge(b, { clientId: client.id, concept: "X", amount: 1000, dueDate: TODAY, note: null })).rejects.toBeInstanceOf(
+      InvalidReferenceError,
+    );
+    const id = await createOneOffCharge(a, { clientId: client.id, concept: "Clase suelta", amount: 30000, dueDate: TODAY, note: null });
+    expect(await getCharge(b, id, TODAY)).toBeNull();
+  });
+
+  it("the database refuses a cuota without a period or a one-off without a concept", async () => {
+    const client = await member(a);
+    const base = { organizationId: a.organization.id, clientId: client.id, dueDate: TODAY, amount: 1000, currency: "PYG" };
+    await expect(db.insert(charges).values({ ...base, kind: "one_off" })).rejects.toThrow();
+    await expect(db.insert(charges).values({ ...base, kind: "cuota" })).rejects.toThrow();
   });
 });

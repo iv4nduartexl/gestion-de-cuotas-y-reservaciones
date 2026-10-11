@@ -8,10 +8,11 @@ import { SectionCard } from "@/components/ui-kit/section-card";
 import { memberStatus } from "@/lib/billing";
 import type { ChargeWithStatus } from "@/lib/data/charges";
 import { formatCalendarDate } from "@/lib/datetime";
-import { ENROLLMENT_STATUS_LABELS, intervalLabel, type EnrollmentStatus, type IntervalUnit } from "@/lib/membership-constants";
+import { HelpHint } from "@/components/ui-kit/help-hint";
+import { GLOSSARY } from "@/lib/help-content";
+import { ENROLLMENT_STATUS_LABELS, intervalLabel, type BillingTiming, type EnrollmentStatus, type IntervalUnit } from "@/lib/membership-constants";
 import { currencyPrefix, formatAmountInput, formatMoney } from "@/lib/money";
 import { ChargeBadge } from "./charge-badge";
-import { EnrollForm } from "./enroll-form";
 import { PaymentDialog } from "./payment-dialog";
 
 type Enrollment = {
@@ -23,6 +24,7 @@ type Enrollment = {
   planName: string;
   intervalUnit: IntervalUnit;
   intervalCount: number;
+  billingTiming: BillingTiming;
 };
 
 export function MembershipSection({
@@ -41,7 +43,7 @@ export function MembershipSection({
   clientName: string;
   enrollments: Enrollment[];
   charges: ChargeWithStatus[];
-  plans: { id: string; name: string; price: number; currency: string; intervalUnit: IntervalUnit; intervalCount: number }[];
+  plans: { id: string; name: string; price: number; currency: string; intervalUnit: IntervalUnit; intervalCount: number; billingTiming: BillingTiming }[];
   today: string;
   currency: string;
   canEnroll: boolean;
@@ -75,7 +77,8 @@ export function MembershipSection({
                 <span className="font-bold">{enrollment.planName}</span>
                 <span className="text-sm text-muted-foreground tabular">
                   {formatMoney(enrollment.price, enrollment.currency)} {intervalLabel(enrollment.intervalUnit, enrollment.intervalCount)} · desde{" "}
-                  {formatCalendarDate(enrollment.startDate, "dd/MM/yyyy")}
+                  {formatCalendarDate(enrollment.startDate, "dd/MM/yyyy")} ·{" "}
+                  {enrollment.billingTiming === "arrears" ? "paga a período vencido" : "paga por adelantado"}
                 </span>
               </span>
               <Badge variant={enrollment.status === "active" ? "success" : enrollment.status === "paused" ? "warning" : "neutral"}>
@@ -121,14 +124,25 @@ export function MembershipSection({
         </ul>
       )}
 
-      {canEnroll &&
-        (plans.length > 0 ? (
-          <EnrollForm clientId={clientId} plans={plans} today={today} currencyPrefix={currencyPrefix(currency)} />
-        ) : (
-          <Link href="/dashboard/planes/new" className={buttonVariants({ variant: "soft" })}>
-            Crear un plan primero
+      {canEnroll && (
+        <div className="flex flex-wrap items-center gap-2">
+          {plans.length > 0 ? (
+            <span className="flex items-center gap-1.5">
+              <Link href={`/dashboard/clients/${clientId}/inscribir`} className={buttonVariants({ variant: "soft" })}>
+                Inscribir en un plan
+              </Link>
+              <HelpHint label="¿Qué es inscribir?">{GLOSSARY.inscripcion}</HelpHint>
+            </span>
+          ) : (
+            <Link href="/dashboard/planes/new" className={buttonVariants({ variant: "soft" })}>
+              Crear un plan
+            </Link>
+          )}
+          <Link href={`/dashboard/cuotas/new?cliente=${clientId}`} className={buttonVariants({ variant: "ghost" })}>
+            Cobro único
           </Link>
-        ))}
+        </div>
+      )}
 
       {charges.length > 0 && (
         <div className="flex flex-col gap-2">

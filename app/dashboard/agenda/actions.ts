@@ -11,7 +11,9 @@ import {
   BookingReferenceError,
   getAvailability,
   listBookableServices,
+  bookStay,
   SlotUnavailableError,
+  StayRulesError,
 } from "@/lib/booking";
 import {
   getAppointment,
@@ -19,15 +21,17 @@ import {
   setAppointmentStatus,
   updateInternalNotes,
 } from "@/lib/data/appointments";
-import { listClients } from "@/lib/data/clients";
+import { getStayService, loadOccupiedDates } from "@/lib/data/stays";
 import { getStaffForMember } from "@/lib/data/staff";
-import { DATE_PATTERN, zonedToUtc } from "@/lib/datetime";
+import { addDaysToDate, DATE_PATTERN, todayInZone, zonedToUtc } from "@/lib/datetime";
 import { withFlash } from "@/lib/flash";
 import { parseForm } from "@/lib/forms";
+import { parseMoneyInput } from "@/lib/money";
 import { normalizePhone } from "@/lib/phone";
 import type { TenantContext } from "@/lib/tenant";
 import { optionalText } from "@/lib/validation/common";
-import { dashboardBookingSchema } from "@/lib/validation/booking";
+import { dashboardBookingSchema, dashboardStayBookingSchema, stayCalendarQuerySchema } from "@/lib/validation/booking";
+import type { StayCalendar } from "@/app/[slug]/actions";
 
 const APPOINTMENTS = { product: "appointments" } as const;
 
@@ -36,13 +40,6 @@ async function restrictedStaffId(ctx: TenantContext) {
   if (ctx.role !== "member") return null;
   const own = await getStaffForMember(ctx, ctx.memberId);
   return own?.id ?? "none";
-}
-
-export async function searchClientsAction(query: string) {
-  const ctx = await authorizeAction({ appointment: ["create"] }, APPOINTMENTS);
-  if (!ctx) return [];
-  const { rows } = await listClients(ctx, { q: query.slice(0, 100) });
-  return rows.slice(0, 8).map((client) => ({ id: client.id, name: client.name, phone: client.phone }));
 }
 
 export async function getDashboardSlotsAction(query: { serviceId: string; staffChoice: string; date: string }) {
@@ -104,6 +101,84 @@ export async function createAppointmentAction(
     throw error;
   }
   redirect(withFlash(`/dashboard/agenda/${id}`, "turno-creado"));
+}
+
+/** How far ahead the dashboard can book a rental (no online horizon here). */
+const DASHBOARD_STAY_DAYS = 365;
+
+/** Taken dates of a rental for the dashboard calendars (no minimum notice). */
+export async function getDashboardStayCalendarAction(query: {
+  serviceId: string;
+  fromDate: string;
+  excludeId?: string;
+}): Promise<StayCalendar | null> {
+  const ctx = await authorizeAction({ appointment: ["create"] }, APPOINTMENTS);
+  if (!ctx) return null;
+  const parsed = stayCalendarQuerySchema.safeParse(query);
+  if (!parsed.success) return null;
+  const service = await getStayService(ctx, parsed.data.serviceId);
+  if (!service) return null;
+  const today = todayInZone(ctx.settings.timezone);
+  const lastCheckIn = addDaysToDate(today, DASHBOARD_STAY_DAYS);
+  const lastDate = addDaysToDate(lastCheckIn, service.maxStay ?? 31);
+  const from = parsed.data.fromDate < today ? today : parsed.data.fromDate;
+  const to = addDaysToDate(from, 100) < lastDate ? addDaysToDate(from, 100) : lastDate;
+  const taken = await loadOccupiedDates(ctx, service, from, to, query.excludeId ? (parseId(query.excludeId) ?? undefined) : undefined);
+  return { taken: [...taken], firstDate: today, lastDate, lastCheckIn };
+}
+
+export async function createStayAppointmentAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const ctx = await authorizeAction({ appointment: ["create"] }, APPOINTMENTS);
+  if (!ctx) return FORBIDDEN;
+  // Rentals have no staff: members only book their own turnos.
+  if (await restrictedStaffId(ctx)) return FORBIDDEN;
+  const parsed = parseForm(dashboardStayBookingSchema, formData);
+  if (!parsed.success) return { errors: parsed.errors };
+  const input = parsed.data;
+  const service = await getStayService(ctx, input.serviceId);
+  if (!service) return { errors: { serviceId: "Ya no está disponible. Recargá la página." } };
+  let price: number | undefined;
+  if (input.price) {
+    const amount = parseMoneyInput(input.price, service.currency);
+    if (amount === null) return { errors: { price: "Precio inválido." } };
+    price = amount;
+  }
+
+  let id: string;
+  try {
+    const booked = await bookStay(ctx, {
+      serviceId: service.id,
+      checkIn: input.checkIn,
+      checkOut: input.checkOut,
+      client: input.clientId
+        ? { id: input.clientId }
+        : { name: input.newClientName!, phone: normalizePhone(input.newClientPhone)! },
+      status: "confirmed",
+      source: "dashboard",
+      notes: input.notes,
+      price,
+    });
+    id = booked.id;
+  } catch (error) {
+    if (error instanceof SlotUnavailableError) {
+      return { errors: { checkIn: "Alguna de esas fechas ya está ocupada. Elegí otras." } };
+    }
+    if (error instanceof StayRulesError) {
+      const messages = {
+        order: "La salida tiene que ser después de la entrada.",
+        too_short: "La estadía es más corta que el mínimo.",
+        too_long: "La estadía es más larga que el máximo.",
+        past: "Esa fecha ya pasó.",
+        too_far: "Esa fecha está demasiado lejos.",
+      };
+      return { errors: { checkIn: messages[error.reason] } };
+    }
+    if (error instanceof BookingReferenceError) {
+      return { errors: { [error.field === "clientId" ? "client" : "serviceId"]: "Ya no está disponible. Recargá la página." } };
+    }
+    throw error;
+  }
+  redirect(withFlash(`/dashboard/agenda/${id}`, "alquiler-creado"));
 }
 
 const STATUS_MESSAGES: Partial<Record<AppointmentStatus, string>> = {

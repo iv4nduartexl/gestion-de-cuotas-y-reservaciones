@@ -5,6 +5,7 @@ import {
   computeSlots,
   isoWeekday,
   isSlotAvailable,
+  longestBookableMinutes,
   pickStaff,
   type SlotOptions,
   type StaffAvailability,
@@ -42,6 +43,29 @@ function options(overrides: Partial<SlotOptions> = {}): SlotOptions {
 
 const times = (staff: StaffAvailability[], opts: SlotOptions) =>
   computeSlots(staff, opts)[0].slots.map((slot) => slot.time);
+
+describe("long turnos", () => {
+  it("can cross the lunch break when they start and end inside opening hours", () => {
+    // 08–12 + 14–18: a 9 h turno fits from 08:00 to 17:00 (and 09:00 to 18:00).
+    const result = times([person()], options({ durationMinutes: 9 * 60 }));
+    expect(result).toEqual(["08:00", "08:30", "09:00"]);
+    // A 1 h turno can't end in the gap (11:30 → 12:30)...
+    expect(times([person()], options({ durationMinutes: 60 }))).not.toContain("11:30");
+    // ...but a 3 h one starting 11:30 ends at 14:30, inside the afternoon.
+    expect(times([person()], options({ durationMinutes: 180 }))).toContain("11:30");
+  });
+
+  it("offers nothing when the service is longer than the whole day", () => {
+    expect(times([person()], options({ durationMinutes: 11 * 60 }))).toEqual([]);
+    expect(longestBookableMinutes(person().rules)).toBe(10 * 60);
+  });
+
+  it("still respects días libres and turnos inside the span", () => {
+    const lunchMeeting = { start: at(MONDAY, "12:30"), end: at(MONDAY, "13:00") };
+    // The block is in the gap, but a long turno would cover it.
+    expect(times([person({ blocks: [lunchMeeting] })], options({ durationMinutes: 9 * 60 }))).toEqual([]);
+  });
+});
 
 describe("computeSlots", () => {
   it("walks split shifts in 24 h local time", () => {

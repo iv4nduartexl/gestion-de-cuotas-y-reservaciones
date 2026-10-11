@@ -125,6 +125,7 @@ Open `https://<DOMAIN>`, create your account, and check that the verification em
 - **Rotating secrets:** edit `.env.production`, then `./deploy.sh`.
   - Changing `BETTER_AUTH_SECRET` signs everyone out.
   - Changing `CRON_SECRET` needs no other step: the cron container reads it from the same file.
+- **Developer admin:** set `ADMIN_EMAILS=you@example.com` in `.env.production` and `./deploy.sh`. Sign up with that email and verify it, then open `https://<DOMAIN>/admin`. "Entrar como dueño" opens a business as its owner for 1 hour; a coral banner shows it, and every change appears in that business's Actividad as "Soporte (admin)". Removing the email revokes access on the next request.
 - **Monitoring:** point a free uptime monitor (UptimeRobot, Better Stack) at `https://<DOMAIN>/api/health`. It returns 503 if the database is down.
 - **Scaling:** one app container handles a lot of small businesses. Before running several replicas, read the Next.js self-hosting guide (shared cache, `deploymentId`). The scheduled jobs are already safe to run concurrently thanks to an advisory lock.
 

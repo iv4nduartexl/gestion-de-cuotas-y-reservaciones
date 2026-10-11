@@ -15,6 +15,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { member } from "./auth";
+import { BOOKING_TYPES, STAY_UNITS } from "../../lib/service-constants";
 import { organizationIdColumn, timestamps } from "./columns";
 
 // Tenant integrity: every parent table has unique(organization_id, id), and
@@ -53,10 +54,23 @@ export const services = pgTable(
     organizationId: organizationIdColumn(),
     name: text().notNull(),
     description: text(),
-    durationMinutes: integer().notNull(),
-    // Integer amount in the currency's minor unit (PYG has none).
+    // "slot": turnos by the hour; "stay": rentals by days/nights.
+    bookingType: text({ enum: BOOKING_TYPES }).notNull().default("slot"),
+    // Slot services only.
+    durationMinutes: integer(),
+    // Integer amount in the currency's minor unit (PYG has none). For stays:
+    // the price per night/day.
     price: integer().notNull(),
     currency: text().notNull(),
+    // Stay services only (rentals): how they're counted, check-in/out hours
+    // ("HH:mm"), length limits and optional weekly/monthly prices.
+    stayUnit: text({ enum: STAY_UNITS }),
+    checkInTime: text(),
+    checkOutTime: text(),
+    minStay: integer(),
+    maxStay: integer(),
+    weeklyPrice: integer(),
+    monthlyPrice: integer(),
     archivedAt: timestamp({ withTimezone: true }),
     ...timestamps,
   },
@@ -65,8 +79,21 @@ export const services = pgTable(
     index("services_org_name_idx").on(t.organizationId, t.name),
     check(
       "services_duration_range",
-      sql`${t.durationMinutes} between 5 and 720 and ${t.durationMinutes} % 5 = 0`,
+      sql`(${t.bookingType} = 'slot' and ${t.durationMinutes} between 5 and 1440 and ${t.durationMinutes} % 5 = 0)
+        or (${t.bookingType} = 'stay' and ${t.durationMinutes} is null)`,
     ),
+    check(
+      "services_stay_fields",
+      sql`${t.bookingType} = 'slot'
+        or (${t.stayUnit} in ('night', 'day')
+          and ${t.checkInTime} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          and ${t.checkOutTime} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          and ${t.minStay} between 1 and 366
+          and (${t.maxStay} is null or ${t.maxStay} between ${t.minStay} and 366)
+          and (${t.weeklyPrice} is null or ${t.weeklyPrice} >= 0)
+          and (${t.monthlyPrice} is null or ${t.monthlyPrice} >= 0))`,
+    ),
+    check("services_booking_type", sql`${t.bookingType} in ('slot', 'stay')`),
     check("services_price_non_negative", sql`${t.price} >= 0`),
     check("services_currency_format", sql`${t.currency} ~ '^[A-Z]{3}$'`),
   ],

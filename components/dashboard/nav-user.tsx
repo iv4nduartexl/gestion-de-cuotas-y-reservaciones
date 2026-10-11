@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronsUpDownIcon, CircleHelpIcon, LogOutIcon } from "lucide-react";
+import { ChevronsUpDownIcon, CircleHelpIcon, LogOutIcon, ShieldIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -24,9 +24,12 @@ import { authClient } from "@/lib/auth/client";
 export function NavUser({
   user,
   roleLabel,
+  showAdmin = false,
 }: {
   user: { name: string; email: string };
   roleLabel: string;
+  /** The developer admin (ADMIN_EMAILS) gets a link to /admin. */
+  showAdmin?: boolean;
 }) {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -82,6 +85,17 @@ export function NavUser({
               <CircleHelpIcon />
               ¿Qué hace Agenda?
             </DropdownMenuItem>
+            {showAdmin && (
+              <DropdownMenuItem
+                onClick={() => {
+                  setOpenMobile(false);
+                  router.push("/admin");
+                }}
+              >
+                <ShieldIcon />
+                Panel de admin
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={signOut}>
               <LogOutIcon />
               Cerrar sesión

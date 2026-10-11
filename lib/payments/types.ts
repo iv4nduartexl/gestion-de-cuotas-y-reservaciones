@@ -1,11 +1,13 @@
 // Contract every online payment provider implements (Bancard, Pagopar...).
 // See docs/payment-providers.md.
 
+import type { IntervalUnit } from "@/lib/membership-constants";
+
 export type SubscriptionInput = {
   business: { organizationId: string; name: string; currency: string };
   enrollment: { id: string; price: number; startDate: string };
   client: { id: string; name: string; email: string | null; phone: string };
-  plan: { name: string; intervalUnit: "week" | "month"; intervalCount: number };
+  plan: { name: string; intervalUnit: IntervalUnit; intervalCount: number };
   returnUrl: string;
 };
 

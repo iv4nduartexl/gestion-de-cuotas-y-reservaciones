@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/db";
@@ -42,7 +42,7 @@ beforeAll(async () => {
 describe("archiving a client", () => {
   it("pauses their memberships so no cuota reminders are planned", async () => {
     const client = await newClient(a);
-    const plan = await createPlan(a, { name: "Mensual", description: null, price: 100000, intervalUnit: "month", intervalCount: 1 });
+    const plan = await createPlan(a, { name: "Mensual", description: null, price: 100000, intervalUnit: "month", intervalCount: 1, billingTiming: "advance" });
     await enroll(a, { clientId: client.id, planId: plan.id, startDate: "2030-01-09", price: null, notes: null }, TODAY);
 
     const result = await setClientArchived(a, client.id, true, TODAY);
@@ -76,7 +76,7 @@ describe("public booking with someone else's phone", () => {
   it("keeps the stored client name and remembers the typed one", async () => {
     const person = await createStaff(b, { name: "Ana", memberId: null });
     await replaceWeeklySchedule(b, person.id, [{ weekday: 1, startTime: "08:00", endTime: "12:00" }]);
-    const service = await createService(b, { name: "Corte", description: null, durationMinutes: 30, price: 50000, staffIds: [person.id] });
+    const service = await createService(b, { name: "Corte", description: null, bookingType: "slot", durationMinutes: 30, price: 50000, staffIds: [person.id] });
     const owner = await createClient(b, { name: "María Real", phone: "+595981777001", email: null, documentNumber: null, notes: null });
 
     const booked = await bookAppointment(b, {
@@ -113,5 +113,31 @@ describe("audit log", () => {
     expect(events[0]).toMatchObject({ action: "charge.voided", actorName: "Ana", targetId: "x" });
     expect((await listAuditEvents(b)).some((event) => event.targetId === "x")).toBe(false);
     expect(await db.select().from(auditEvents).where(eq(auditEvents.organizationId, a.organization.id))).not.toHaveLength(0);
+  });
+});
+
+describe("first cuota options", () => {
+  async function dueDates(choice: "start" | "end" | "date" | "free", firstDueDate?: string) {
+    const client = await newClient(b);
+    const plan = await createPlan(b, { name: `Plan ${seq}`, description: null, price: 90000, intervalUnit: "month", intervalCount: 1, billingTiming: "advance" });
+    const id = await enroll(b, { clientId: client.id, planId: plan.id, startDate: TODAY, price: null, notes: null, firstCuota: choice, firstDueDate }, TODAY);
+    const rows = await db.execute<{ due_date: string }>(sql`select due_date from charges where enrollment_id = ${id} order by due_date`);
+    return rows.rows.map((row) => row.due_date);
+  }
+
+  it("bills today, at the end of the period, on a chosen date, or after a free period", async () => {
+    expect(await dueDates("start")).toEqual(["2030-01-07"]);
+    // A period paid at its end: nothing is owed on the start day.
+    expect(await dueDates("end")).toEqual([]);
+    expect(await dueDates("date", "2030-01-12")).toEqual(["2030-01-12"]);
+    expect(await dueDates("free")).toEqual([]);
+  });
+
+  it("supports custom frequencies (every 10 days)", async () => {
+    const client = await newClient(b);
+    const plan = await createPlan(b, { name: "Cada 10 días", description: null, price: 30000, intervalUnit: "day", intervalCount: 10, billingTiming: "advance" });
+    const id = await enroll(b, { clientId: client.id, planId: plan.id, startDate: "2029-12-20", price: null, notes: null }, TODAY);
+    const rows = await db.execute<{ due_date: string }>(sql`select due_date from charges where enrollment_id = ${id} order by due_date`);
+    expect(rows.rows.map((row) => row.due_date)).toEqual(["2029-12-20", "2029-12-30", "2030-01-09"]);
   });
 });

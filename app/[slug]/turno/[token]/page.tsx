@@ -52,17 +52,33 @@ async function Turno({ params }: { params: PageProps<"/[slug]/turno/[token]">["p
   const { settings, organization } = business;
   const tz = settings.timezone;
   const { upcoming, canCancel } = turnoTiming(turno, settings.clientCancelNoticeHours);
-  const when = formatInZone(turno.startsAt, tz, "EEEE d 'de' MMMM");
-  const time = `${formatInZone(turno.startsAt, tz, "HH:mm")} a ${formatInZone(turno.endsAt, tz, "HH:mm")}`;
+  const isStay = turno.kind === "stay";
+  const when = isStay
+    ? `${formatInZone(turno.startsAt, tz, "EEE d/MM")} al ${formatInZone(turno.endsAt, tz, "EEE d/MM")}`
+    : formatInZone(turno.startsAt, tz, "EEEE d 'de' MMMM");
+  const time = isStay
+    ? `Entrada ${formatInZone(turno.startsAt, tz, "HH:mm")} · salida ${formatInZone(turno.endsAt, tz, "HH:mm")}`
+    : `${formatInZone(turno.startsAt, tz, "HH:mm")} a ${formatInZone(turno.endsAt, tz, "HH:mm")}`;
+  const noun = isStay ? "Reserva" : "Turno";
   const summary = `${turno.serviceName}, ${organization.name}`;
   const selfLink = `Mi turno en ${organization.name}: ${when}, ${formatInZone(turno.startsAt, tz, "HH:mm")}.`;
 
   const hero =
     turno.status === "pending"
-      ? { icon: HourglassIcon, title: "Turno solicitado", text: "El negocio lo tiene que confirmar. El horario ya quedó reservado para vos.", tone: "bg-warning-soft text-warning-foreground" }
+      ? {
+          icon: HourglassIcon,
+          title: `${noun} solicitad${isStay ? "a" : "o"}`,
+          text: `El negocio lo tiene que confirmar. ${isStay ? "Las fechas ya quedaron reservadas" : "El horario ya quedó reservado"} para vos.`,
+          tone: "bg-warning-soft text-warning-foreground",
+        }
       : turno.status === "cancelled"
-        ? { icon: CircleXIcon, title: "Turno cancelado", text: "Este horario quedó libre.", tone: "bg-muted text-muted-foreground" }
-        : { icon: CalendarCheckIcon, title: turno.status === "confirmed" ? "¡Turno confirmado!" : STATUS_LABELS[turno.status], text: upcoming ? "Te esperamos." : "", tone: "bg-success-soft text-success-foreground" };
+        ? { icon: CircleXIcon, title: `${noun} cancelad${isStay ? "a" : "o"}`, text: isStay ? "Estas fechas quedaron libres." : "Este horario quedó libre.", tone: "bg-muted text-muted-foreground" }
+        : {
+            icon: CalendarCheckIcon,
+            title: turno.status === "confirmed" ? `¡${noun} confirmad${isStay ? "a" : "o"}!` : STATUS_LABELS[turno.status],
+            text: upcoming ? "Te esperamos." : "",
+            tone: "bg-success-soft text-success-foreground",
+          };
 
   return (
     <>
@@ -88,7 +104,7 @@ async function Turno({ params }: { params: PageProps<"/[slug]/turno/[token]">["p
             <ClockIcon className="size-5 shrink-0 text-primary" aria-hidden="true" />
             <span className="tabular">{time}</span>
           </li>
-          {settings.teamMode === "team" && (
+          {settings.teamMode === "team" && turno.staffName && (
             <li className="flex items-center gap-3">
               <UserRoundIcon className="size-5 shrink-0 text-primary" aria-hidden="true" />
               Con {turno.staffName}

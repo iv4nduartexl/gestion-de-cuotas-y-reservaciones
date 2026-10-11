@@ -65,24 +65,47 @@ export function BookingPhonePreview({
   );
 }
 
-const WEEK: [string, [number, number][]][] = [
-  ["Lun", [[8, 12], [14, 19]]],
-  ["Mar", [[8, 12], [14, 19]]],
-  ["Mié", [[8, 12], [14, 19]]],
-  ["Jue", [[8, 12], [14, 19]]],
-  ["Vie", [[8, 12], [14, 19]]],
-  ["Sáb", [[8, 12]]],
+const EXAMPLE_WEEK: [string, [number, number][]][] = [
+  ["Lun", [[8 * 60, 12 * 60], [14 * 60, 19 * 60]]],
+  ["Mar", [[8 * 60, 12 * 60], [14 * 60, 19 * 60]]],
+  ["Mié", [[8 * 60, 12 * 60], [14 * 60, 19 * 60]]],
+  ["Jue", [[8 * 60, 12 * 60], [14 * 60, 19 * 60]]],
+  ["Vie", [[8 * 60, 12 * 60], [14 * 60, 19 * 60]]],
+  ["Sáb", [[8 * 60, 12 * 60]]],
   ["Dom", []],
 ];
+const SHORT_DAYS = ["", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
-/** A week of opening hours as bars (06–21 h). */
-export function WeekPreview({ caption = "Ejemplo: corte al mediodía y sábados a la mañana" }: { caption?: string }) {
-  const from = 6;
-  const span = 15;
+const toMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+const hhmm = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+
+/**
+ * A week of opening hours as bars. Without `days` it shows an example; with
+ * them, the real schedule ({ weekday, ranges: [{ start, end }] }).
+ */
+export function WeekPreview({
+  caption = "Ejemplo: corte al mediodía y sábados a la mañana",
+  days,
+}: {
+  caption?: string;
+  days?: { weekday: number; ranges: { start: string; end: string }[] }[];
+}) {
+  const week: [string, [number, number][]][] = days
+    ? [1, 2, 3, 4, 5, 6, 7].map((weekday) => [
+        SHORT_DAYS[weekday],
+        (days.find((day) => day.weekday === weekday)?.ranges ?? [])
+          .map((range) => [toMinutes(range.start), toMinutes(range.end)] as [number, number])
+          .sort((a, b) => a[0] - b[0]),
+      ])
+    : EXAMPLE_WEEK;
+  const all = week.flatMap(([, ranges]) => ranges.flat());
+  const from = Math.min(6 * 60, ...all);
+  const to = Math.max(21 * 60, ...all);
+  const span = to - from;
   return (
     <Frame caption={caption}>
       <ul className="flex flex-col gap-1.5">
-        {WEEK.map(([day, ranges]) => (
+        {week.map(([day, ranges]) => (
           <li key={day} className="flex items-center gap-2">
             <span className="w-8 text-[11px] font-bold text-muted-foreground">{day}</span>
             <span className="relative h-3 flex-1 rounded-full bg-muted">
@@ -94,8 +117,8 @@ export function WeekPreview({ caption = "Ejemplo: corte al mediodía y sábados 
                 />
               ))}
             </span>
-            <span className="w-16 text-right text-[10px] text-muted-foreground tabular">
-              {ranges.length === 0 ? "Cerrado" : `${ranges[0][0]}–${ranges[ranges.length - 1][1]} h`}
+            <span className="w-24 text-right text-[10px] text-muted-foreground tabular">
+              {ranges.length === 0 ? "Cerrado" : `${hhmm(ranges[0][0])}–${hhmm(ranges[ranges.length - 1][1])}`}
             </span>
           </li>
         ))}

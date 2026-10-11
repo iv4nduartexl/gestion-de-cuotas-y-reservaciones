@@ -12,10 +12,13 @@ import { ReminderSettingsForm } from "@/components/settings/reminder-settings-fo
 import { PublicProfileForm } from "@/components/settings/public-profile-form";
 import { TeamModeForm } from "@/components/settings/team-mode-form";
 import { PageHeader } from "@/components/ui-kit/page-header";
+import { SummaryCard } from "@/components/wizard/summary-card";
 import { SectionCard } from "@/components/ui-kit/section-card";
 import { listAuditEvents } from "@/lib/audit";
 import { BUSINESS_TYPE_INFO } from "@/lib/business-types";
+import { listServices } from "@/lib/data/services";
 import { productUsage } from "@/lib/data/settings";
+import { unitAmount } from "@/lib/membership-constants";
 import { env } from "@/lib/env";
 import { formatPhone } from "@/lib/phone";
 import { can, getTenantContextOrRedirect } from "@/lib/tenant";
@@ -48,6 +51,8 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
   const editable = can(ctx, { businessSettings: ["update"] });
   const appHost = new URL(env.BETTER_AUTH_URL).host;
   const params = await searchParams;
+  const durations = settings.appointmentsEnabled ? (await listServices(ctx)).flatMap((service) => (service.durationMinutes ? [service.durationMinutes] : [])) : [];
+  const shortestService = durations.length > 0 ? Math.min(...durations) : null;
 
   const tabs: { value: Tab; label: string; description: string }[] = [
     { value: "negocio", label: "Tu negocio", description: "Nombre, link, qué partes de Agenda usás y forma de trabajo." },
@@ -63,6 +68,11 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
       : []),
   ];
   const tab = tabs.find((t) => t.value === params.seccion) ?? tabs[0];
+  // One thing at a time: a summary with "Cambiar", which opens only that form.
+  const editing = editable && typeof params.editar === "string" ? params.editar : null;
+  const show = (key: string) => !editable || editing === key;
+  const edit = (key: string) => `/dashboard/settings?${tab.value === "negocio" ? "" : `seccion=${tab.value}&`}editar=${key}`;
+  const tabHref = tab.value === "negocio" ? "/dashboard/settings" : `/dashboard/settings?seccion=${tab.value}`;
   const products = [settings.appointmentsEnabled && "Turnos", settings.membershipsEnabled && "Cuotas"].filter(Boolean).join(" + ");
   const turnoReminders = [settings.remindAppointments24h && "el día anterior", settings.remindAppointments2h && "2 h antes"].filter(Boolean).join(" y ");
   const reminderSummary: [string, string][] = [
@@ -75,6 +85,7 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
   return (
     <>
       <PageHeader
+        back={{ href: "/dashboard/negocio", label: "Mi negocio" }}
         help={{ section: "settings", settings: ctx.settings, open: false }}
         title="Configuración"
         description="Los datos de tu negocio y cómo usás Agenda."
@@ -99,9 +110,51 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
         <p className="text-sm text-muted-foreground">{tab.description}</p>
       </div>
 
+      {editing && (
+        <Link href={tabHref} className="w-fit text-sm font-semibold text-primary">
+          ← Volver al resumen
+        </Link>
+      )}
+
+      {editable && !editing && tab.value === "negocio" && (
+        <SummaryCard
+          rows={[
+            { label: "Nombre", value: organization.name, href: edit("perfil") },
+            { label: "Link de reservas", value: `${appHost}/${settings.slug}`, href: edit("perfil") },
+            { label: "Zona horaria", value: timeZoneLabel(settings.timezone), href: edit("perfil") },
+            { label: "Qué usás", value: `${BUSINESS_TYPE_INFO[settings.businessType].label} · ${products}`, href: edit("uso") },
+            ...(settings.appointmentsEnabled
+              ? [{ label: "Forma de trabajo", value: settings.teamMode === "team" ? "Con equipo" : "Solo/a", href: edit("equipo") }]
+              : []),
+            { label: "Moneda", value: settings.currency === "PYG" ? "Guaraníes (Gs.)" : settings.currency },
+          ]}
+        />
+      )}
+      {editable && !editing && tab.value === "reservas" && (
+        <SummaryCard
+          rows={[
+            { label: "Confirmación", value: settings.autoConfirmBookings ? "Automática" : "La confirmás vos", href: edit("reglas") },
+            { label: "Se puede reservar", value: `Hasta ${days(settings.maxDaysAhead)} antes`, href: edit("reglas") },
+            { label: "Cancelación online", value: settings.clientCancelNoticeHours === 0 ? "Hasta la hora del turno" : `Hasta ${settings.clientCancelNoticeHours} h antes`, href: edit("reglas") },
+            { label: "WhatsApp y dirección", value: [settings.publicPhone ? formatPhone(settings.publicPhone) : null, settings.address].filter(Boolean).join(" · ") || "Sin cargar", href: edit("publico") },
+          ]}
+        />
+      )}
+      {editable && !editing && tab.value === "cuotas" && (
+        <SummaryCard
+          rows={[
+            { label: "Tolerancia", value: settings.graceCount === 0 ? "Sin tolerancia" : unitAmount(settings.graceUnit, settings.graceCount), href: edit("cuotas") },
+            { label: "Mensaje de cuota vencida", value: settings.paymentReminderTemplate ? "Personalizado" : "El de Agenda", href: edit("cuotas") },
+          ]}
+        />
+      )}
+      {editable && !editing && tab.value === "recordatorios" && (
+        <SummaryCard rows={reminderSummary.map(([label, value]) => ({ label, value, href: edit("recordatorios") }))} />
+      )}
+
       {tab.value === "negocio" && (
         <>
-          <SectionCard
+          <>{show("perfil") && (<SectionCard
             title="Datos del negocio"
             description="Lo que ven tus clientes: el nombre y tu link de reservas."
             actions={<Summary>{`${appHost}/${settings.slug}`}</Summary>}
@@ -123,9 +176,9 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
                 ]}
               />
             )}
-          </SectionCard>
+          </SectionCard>)}</>
 
-          <SectionCard
+          <>{show("uso") && (<SectionCard
             title="Qué usás"
             description="Prendé o apagá las partes de Agenda que necesitás. No se borra nada."
             actions={<Summary>{products}</Summary>}
@@ -146,10 +199,10 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
                 ]}
               />
             )}
-          </SectionCard>
+          </SectionCard>)}</>
 
           {settings.appointmentsEnabled && (
-            <SectionCard
+            <>{show("equipo") && (<SectionCard
               title="Forma de trabajo"
               description="¿Atendés vos solo/a o tenés un equipo? Con equipo, cada persona tiene su propio horario."
               actions={<Summary>{settings.teamMode === "team" ? "Equipo" : "Solo/a"}</Summary>}
@@ -159,18 +212,18 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
               ) : (
                 <ReadOnly rows={[["Forma de trabajo", settings.teamMode === "team" ? "Equipo" : "Solo/a"]]} />
               )}
-            </SectionCard>
+            </SectionCard>)}</>
           )}
 
-          <SectionCard title="Moneda" description="Todos los precios se guardan en esta moneda.">
+          <>{show("moneda") && (<SectionCard title="Moneda" description="Todos los precios se guardan en esta moneda.">
             <ReadOnly rows={[["Moneda", settings.currency === "PYG" ? "Guaraníes (Gs.)" : settings.currency]]} />
-          </SectionCard>
+          </SectionCard>)}</>
         </>
       )}
 
       {tab.value === "reservas" && (
         <>
-          <SectionCard
+          <>{show("reglas") && (<SectionCard
             title="Reglas de reserva"
             description="Cómo reservan tus clientes desde tu link: anticipación, horarios ofrecidos y cancelaciones."
             actions={
@@ -180,13 +233,13 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
             }
           >
             {editable ? (
-              <BookingRulesForm rules={settings} />
+              <BookingRulesForm rules={settings} shortestServiceMinutes={shortestService} />
             ) : (
               <ReadOnly rows={[["Confirmación", settings.autoConfirmBookings ? "Automática" : "Manual"]]} />
             )}
-          </SectionCard>
+          </SectionCard>)}</>
 
-          <SectionCard title="Datos públicos" description="Se muestran en tu página de reservas.">
+          <>{show("publico") && (<SectionCard title="Datos públicos" description="Se muestran en tu página de reservas.">
             {editable ? (
               <PublicProfileForm
                 publicPhone={settings.publicPhone ? formatPhone(settings.publicPhone) : null}
@@ -201,22 +254,22 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
                 ]}
               />
             )}
-          </SectionCard>
+          </SectionCard>)}</>
         </>
       )}
 
       {tab.value === "cuotas" && (
-        <SectionCard
+        <>{show("cuotas") && (<SectionCard
           title="Cuotas"
           description="Cuándo una cuota pasa a vencida y qué mensaje se manda para recordarla."
-          actions={<Summary>{settings.graceDays === 0 ? "Sin tolerancia" : `${days(settings.graceDays)} de tolerancia`}</Summary>}
+          actions={<Summary>{settings.graceCount === 0 ? "Sin tolerancia" : `${unitAmount(settings.graceUnit, settings.graceCount)} de tolerancia`}</Summary>}
         >
           {editable ? (
-            <MembershipSettingsForm graceDays={settings.graceDays} template={settings.paymentReminderTemplate} />
+            <MembershipSettingsForm graceCount={settings.graceCount} graceUnit={settings.graceUnit} template={settings.paymentReminderTemplate} />
           ) : (
-            <ReadOnly rows={[["Días de tolerancia", String(settings.graceDays)]]} />
+            <ReadOnly rows={[["Tolerancia", settings.graceCount === 0 ? "Sin tolerancia" : unitAmount(settings.graceUnit, settings.graceCount)]]} />
           )}
-        </SectionCard>
+        </SectionCard>)}</>
       )}
 
       {tab.value === "actividad" && (
@@ -226,7 +279,7 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
       )}
 
       {tab.value === "recordatorios" && (
-        <SectionCard
+        <>{show("recordatorios") && (<SectionCard
           title="Recordatorios"
           description="Cuándo Agenda le recuerda a tus clientes sus turnos y cuotas."
           actions={<Summary>{reminderSummary.map(([label, value]) => `${label}: ${value}`).join(" · ")}</Summary>}
@@ -241,7 +294,7 @@ async function Settings({ searchParams }: { searchParams: PageProps<"/dashboard/
           ) : (
             <ReadOnly rows={reminderSummary} />
           )}
-        </SectionCard>
+        </SectionCard>)}</>
       )}
     </>
   );

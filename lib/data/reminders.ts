@@ -63,7 +63,7 @@ function baseQuery() {
       amount: charges.amount,
       currency: charges.currency,
       paid: paidSum,
-      planName: plans.name,
+      planName: sql<string | null>`coalesce(${charges.concept}, ${plans.name})`,
     })
     .from(reminders)
     .innerJoin(clients, and(eq(clients.id, reminders.clientId), eq(clients.organizationId, reminders.organizationId)))

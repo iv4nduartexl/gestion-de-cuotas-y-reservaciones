@@ -16,6 +16,7 @@ import { parseId, requireProduct } from "@/lib/actions";
 import { STATUS_BADGE, STATUS_LABELS } from "@/lib/appointment-status";
 import { getAppointment } from "@/lib/data/appointments";
 import { getStaffForMember } from "@/lib/data/staff";
+import { stayUnits } from "@/lib/stays";
 import { formatInZone, todayInZone } from "@/lib/datetime";
 import { formatMoney } from "@/lib/money";
 import { formatPhone } from "@/lib/phone";
@@ -44,23 +45,32 @@ async function AppointmentDetail({ params }: { params: PageProps<"/dashboard/age
   const canManage = can(ctx, { appointment: ["update"] }) && (ctx.role !== "member" || own?.id === turno.staffId);
   const backHref = date === todayInZone(tz) ? "/dashboard/agenda" : `/dashboard/agenda?fecha=${date}`;
 
-  const rows: { icon: React.ReactNode; label: string; value: React.ReactNode }[] = [
-    { icon: <CalendarIcon />, label: "Día", value: <span className="inline-block first-letter:uppercase">{formatInZone(turno.startsAt, tz, "EEEE d 'de' MMMM yyyy")}</span> },
-    { icon: <ClockIcon />, label: "Hora", value: <span className="tabular">{formatInZone(turno.startsAt, tz, "HH:mm")} a {formatInZone(turno.endsAt, tz, "HH:mm")}</span> },
-    { icon: <ScissorsIcon />, label: "Servicio", value: `${turno.serviceName} · ${formatMoney(turno.price, turno.currency)}` },
-    ...(ctx.settings.teamMode === "team" ? [{ icon: <UserRoundIcon />, label: "Con", value: turno.staffName }] : []),
-    {
-      icon: <GlobeIcon />,
-      label: "Origen",
-      value: turno.source === "online" ? "Reservado online por el cliente" : "Agendado desde el panel",
-    },
-  ];
+  const isStay = turno.kind === "stay";
+  const nights = isStay ? stayUnits("night", date, formatInZone(turno.endsAt, tz, "yyyy-MM-dd")) : 0;
+  const rows: { icon: React.ReactNode; label: string; value: React.ReactNode }[] = isStay
+    ? [
+        { icon: <CalendarIcon />, label: "Entrada", value: <span className="inline-block tabular first-letter:uppercase">{formatInZone(turno.startsAt, tz, "EEEE d 'de' MMMM · HH:mm")}</span> },
+        { icon: <CalendarIcon />, label: "Salida", value: <span className="inline-block tabular first-letter:uppercase">{formatInZone(turno.endsAt, tz, "EEEE d 'de' MMMM · HH:mm")}</span> },
+        { icon: <ClockIcon />, label: "Estadía", value: `${nights} ${nights === 1 ? "noche" : "noches"}` },
+        { icon: <ScissorsIcon />, label: "Alquiler", value: `${turno.serviceName} · ${formatMoney(turno.price, turno.currency)}` },
+      ]
+    : [
+        { icon: <CalendarIcon />, label: "Día", value: <span className="inline-block first-letter:uppercase">{formatInZone(turno.startsAt, tz, "EEEE d 'de' MMMM yyyy")}</span> },
+        { icon: <ClockIcon />, label: "Hora", value: <span className="tabular">{formatInZone(turno.startsAt, tz, "HH:mm")} a {formatInZone(turno.endsAt, tz, "HH:mm")}</span> },
+        { icon: <ScissorsIcon />, label: "Servicio", value: `${turno.serviceName} · ${formatMoney(turno.price, turno.currency)}` },
+        ...(ctx.settings.teamMode === "team" ? [{ icon: <UserRoundIcon />, label: "Con", value: turno.staffName }] : []),
+      ];
+  rows.push({
+    icon: <GlobeIcon />,
+    label: "Origen",
+    value: turno.source === "online" ? "Reservado online por el cliente" : "Agendado desde el panel",
+  });
 
   return (
     <>
       <PageHeader
         back={{ href: backHref, label: "Agenda" }}
-        title={`Turno de ${turno.clientName}`}
+        title={`${isStay ? "Reserva" : "Turno"} de ${turno.clientName}`}
         meta={<Badge variant={STATUS_BADGE[turno.status]}>{STATUS_LABELS[turno.status]}</Badge>}
       />
 

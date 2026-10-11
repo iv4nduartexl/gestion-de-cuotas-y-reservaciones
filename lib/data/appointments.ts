@@ -44,6 +44,8 @@ const withNames = {
   serviceName: services.name,
   staffId: appointments.staffId,
   staffName: staff.name,
+  kind: appointments.kind,
+  serviceBookingType: services.bookingType,
 };
 
 function joined() {
@@ -52,7 +54,8 @@ function joined() {
     .from(appointments)
     .innerJoin(clients, and(eq(clients.id, appointments.clientId), eq(clients.organizationId, appointments.organizationId)))
     .innerJoin(services, and(eq(services.id, appointments.serviceId), eq(services.organizationId, appointments.organizationId)))
-    .innerJoin(staff, and(eq(staff.id, appointments.staffId), eq(staff.organizationId, appointments.organizationId)));
+    // Rentals ("stay") have no staff.
+    .leftJoin(staff, and(eq(staff.id, appointments.staffId), eq(staff.organizationId, appointments.organizationId)));
 }
 
 export type AppointmentWithNames = NonNullable<Awaited<ReturnType<typeof getAppointment>>>;

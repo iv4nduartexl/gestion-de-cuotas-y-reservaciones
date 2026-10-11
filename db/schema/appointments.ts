@@ -32,7 +32,11 @@ export const appointments = pgTable(
     organizationId: organizationIdColumn(),
     clientId: uuid().notNull(),
     serviceId: uuid().notNull(),
-    staffId: uuid().notNull(),
+    // "slot": a turno with a staff member. "stay": a rental of the service
+    // itself (no staff); overlapping stays of the same service are rejected by
+    // an exclusion constraint (migration 0013).
+    kind: text({ enum: ["slot", "stay"] }).notNull().default("slot"),
+    staffId: uuid(),
     startsAt: timestamp({ withTimezone: true }).notNull(),
     endsAt: timestamp({ withTimezone: true }).notNull(),
     status: text({ enum: APPOINTMENT_STATUSES }).notNull().default("confirmed"),
@@ -81,6 +85,8 @@ export const appointments = pgTable(
       sql`cancelled_by is null or ${inList("cancelled_by", CANCELLED_BY)}`,
     ),
     check("appointments_price_non_negative", sql`${t.price} >= 0`),
+    check("appointments_kind", sql`(${t.kind} = 'slot' and ${t.staffId} is not null) or (${t.kind} = 'stay' and ${t.staffId} is null)`),
+    index("appointments_org_service_starts_idx").on(t.organizationId, t.serviceId, t.startsAt),
   ],
 );
 

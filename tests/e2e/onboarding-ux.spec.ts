@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { sidebar, USERS } from "./helpers";
+import { USERS, sidebar, wizardNext } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 test.use({ storageState: USERS.g.storageState });
@@ -27,17 +27,22 @@ test("the welcome tour can be replayed from the user menu and walks through ever
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("the sidebar separates daily work from setup and explains each section", async ({ page }) => {
+test("the sidebar shows daily work plus “Mi negocio”, which holds the setup", async ({ page }) => {
   await page.goto("/dashboard");
   const nav = sidebar(page);
-  await expect(nav.getByText("Tu día", { exact: true })).toBeVisible();
-  await expect(nav.getByText("Tu negocio", { exact: true })).toBeVisible();
-  // The subtitle describes the link without changing its name.
-  const cuotas = nav.getByRole("link", { name: "Cuotas", exact: true });
-  await expect(cuotas).toHaveAccessibleDescription("Quién pagó y quién debe");
-  // Plans aren't set up yet.
-  await expect(nav.getByRole("link", { name: /^Planes/ })).toContainText("Qué cobrás cada mes");
-  await expect(nav.getByText("(falta configurar)")).toHaveCount(1);
+  // A gym: Inicio, Cuotas, Recordatorios, Socios and Mi negocio. Nothing else.
+  for (const name of ["Inicio", "Cuotas", "Recordatorios", "Socios", "Mi negocio"]) {
+    await expect(nav.getByRole("link", { name: new RegExp(`^${name}`) })).toBeVisible();
+  }
+  await expect(nav.getByRole("link", { name: /^Planes/ })).toHaveCount(0);
+  await expect(nav.getByRole("link", { name: "Cuotas", exact: true })).toHaveAccessibleDescription("Quién pagó y quién debe");
+  // Plans aren't set up yet: "Mi negocio" says there's something to do.
+  await expect(nav.getByText("(tiene algo para revisar)")).toHaveCount(1);
+
+  await nav.getByRole("link", { name: /^Mi negocio/ }).click();
+  const plans = page.getByRole("link", { name: /^Planes/ });
+  await expect(plans).toContainText("Falta configurar");
+  await expect(page.getByRole("link", { name: /^Configuración/ })).toBeVisible();
 });
 
 test("the guide shows what each step produces, and pages explain themselves until set up", async ({ page }) => {
@@ -50,7 +55,11 @@ test("the guide shows what each step produces, and pages explain themselves unti
   await guide.getByRole("link", { name: /Crear plan/ }).click();
   await expect(page).toHaveURL(/\/dashboard\/planes\/new$/);
   await page.getByLabel("Nombre", { exact: true }).fill("Musculación");
-  await page.getByLabel("Precio").pressSequentially("150000");
+  await wizardNext(page);
+  await page.getByLabel("Precio de cada cuota").pressSequentially("150000");
+  await wizardNext(page);
+  await wizardNext(page);
+  await wizardNext(page);
   await page.getByRole("button", { name: "Crear plan" }).click();
   await expect(page).toHaveURL(/\/dashboard\/planes$/);
   // Configured now: the explanation is one tap away instead of open.
@@ -63,7 +72,7 @@ test("the guide shows what each step produces, and pages explain themselves unti
   // An empty section opens its explanation by default.
   await page.goto("/dashboard/clients");
   await expect(page.getByRole("button", { name: "¿Para qué sirve?" })).toHaveAttribute("aria-expanded", "true");
-  await expect(sidebar(page).getByText("(falta configurar)")).toHaveCount(0);
+  await expect(sidebar(page).getByText("(tiene algo para revisar)")).toHaveCount(0);
 });
 
 test("settings are split into sections that can be linked to", async ({ page }) => {
@@ -71,26 +80,27 @@ test("settings are split into sections that can be linked to", async ({ page }) 
   const tabs = page.getByRole("navigation", { name: "Secciones de configuración" });
   await expect(tabs.getByRole("link", { name: "Recordatorios" })).toHaveAttribute("aria-current", "page");
   await expect(tabs.getByRole("link", { name: "Reservas online" })).toHaveCount(0); // gym: no online bookings
-  await expect(page.getByRole("heading", { name: "Recordatorios", exact: true })).toBeVisible();
+  // A summary, not a wall of forms; "Cambiar" opens only that part.
+  await expect(page.getByRole("link", { name: "Cambiar cuotas" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Datos del negocio" })).toHaveCount(0);
   await tabs.getByRole("link", { name: "Cuotas" }).click();
-  await expect(page.getByLabel("Días de tolerancia")).toBeVisible();
+  await page.getByRole("link", { name: "Cambiar tolerancia" }).click();
+  await expect(page.getByLabel("Tolerancia", { exact: true })).toBeVisible();
 });
 
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
-  test("“Más” reaches every section with its explanation", async ({ page }) => {
+  test("“Más” reaches “Mi negocio”", async ({ page }) => {
     await page.goto("/dashboard");
     const tabs = page.getByRole("navigation", { name: "Navegación principal" });
-    // A gym's phone tabs: Inicio, Cuotas, Socios, Recordatorios. Planes lives in "Más".
+    // A gym's phone tabs: Inicio, Cuotas, Socios, Recordatorios. "Mi negocio" lives in "Más".
     await expect(tabs.getByRole("link", { name: "Recordatorios" })).toBeVisible();
     await tabs.getByRole("button", { name: "Más" }).click();
     const sheet = page.getByRole("dialog", { name: "Todas las secciones" });
-    await expect(sheet.getByText("Tu negocio", { exact: true })).toBeVisible();
-    await expect(sheet.getByRole("link", { name: "Planes" })).toHaveAccessibleDescription(/Qué cobrás cada mes/);
-    await sheet.getByRole("link", { name: "Planes" }).click();
-    await expect(page).toHaveURL(/\/dashboard\/planes$/);
+    await expect(sheet.getByRole("link", { name: "Mi negocio" })).toHaveAccessibleDescription(/Horarios, servicios y más/);
+    await sheet.getByRole("link", { name: "Mi negocio" }).click();
+    await expect(page).toHaveURL(/\/dashboard\/negocio$/);
     await expect(sheet).toBeHidden();
     await expect(tabs.getByRole("button", { name: "Más" })).toHaveClass(/text-primary/);
   });

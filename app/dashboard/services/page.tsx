@@ -11,9 +11,9 @@ import { sectionHelp } from "@/lib/help-content";
 import { PageHeader } from "@/components/ui-kit/page-header";
 import { requireProduct } from "@/lib/actions";
 import { capitalize, vocabularyFor } from "@/lib/business-types";
-import { listServices } from "@/lib/data/services";
-import { formatDuration } from "@/lib/datetime";
+import { findServiceProblems, listServices } from "@/lib/data/services";
 import { formatMoney } from "@/lib/money";
+import { priceSuffix, serviceSummary } from "@/lib/service-format";
 import { can, getTenantContextOrRedirect } from "@/lib/tenant";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,7 @@ async function ServiceList() {
   const ctx = await getTenantContextOrRedirect();
   requireProduct(ctx, "appointments");
   const words = vocabularyFor(ctx.settings.businessType);
-  const rows = await listServices(ctx, { includeArchived: true });
+  const [rows, problems] = await Promise.all([listServices(ctx, { includeArchived: true }), findServiceProblems(ctx)]);
   const canCreate = can(ctx, { service: ["create"] });
   const isTeam = ctx.settings.teamMode === "team";
   const newButton = canCreate && (
@@ -43,6 +43,7 @@ async function ServiceList() {
   return (
     <>
       <PageHeader
+        back={{ href: "/dashboard/negocio", label: "Mi negocio" }}
         help={{ section: "services", settings: ctx.settings, open: rows.length === 0 }}
         title={capitalize(words.service.many)}
         description={`Lo que tus ${words.client.many} pueden reservar, con su duración y su precio.`}
@@ -69,15 +70,17 @@ async function ServiceList() {
                 <div className="flex items-start justify-between gap-3">
                   <span className="text-lg font-bold leading-snug">{service.name}</span>
                   {service.archivedAt && <Badge variant="neutral">Archivado</Badge>}
+                  {!service.archivedAt && problems.has(service.id) && <Badge variant="coral">Necesita arreglo</Badge>}
                 </div>
                 <span className="text-2xl font-extrabold text-primary tabular">
                   {formatMoney(service.price, service.currency)}
+                  <span className="text-sm font-semibold text-muted-foreground">{priceSuffix(service)}</span>
                 </span>
                 <div className="mt-auto flex flex-wrap gap-2">
                   <Badge variant="info">
-                    <ClockIcon aria-hidden="true" /> {formatDuration(service.durationMinutes)}
+                    <ClockIcon aria-hidden="true" /> {serviceSummary(service)}
                   </Badge>
-                  {isTeam && (
+                  {isTeam && service.bookingType === "slot" && (
                     <Badge variant={service.staffCount === 0 ? "warning" : "neutral"}>
                       <UsersIcon aria-hidden="true" />
                       {service.staffCount === 0

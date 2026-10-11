@@ -13,7 +13,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { isActivePath, type NavGroup } from "@/lib/navigation";
+import { isActiveItem, type NavGroup } from "@/lib/navigation";
 
 export const sidebarItemClassName =
   "group/nav h-auto min-h-11 rounded-xl px-3 py-2 text-[15px] font-semibold text-sidebar-foreground hover:bg-white/10 hover:text-white active:bg-white/15 active:text-white data-active:bg-sidebar-accent data-active:font-bold data-active:text-sidebar-accent-foreground data-active:hover:bg-sidebar-accent data-active:hover:text-sidebar-accent-foreground [&_svg]:size-5";
@@ -23,16 +23,18 @@ export function NavMain({ groups }: { groups: NavGroup[] }) {
   const pathname = usePathname();
   const { setOpenMobile } = useSidebar();
 
-  return groups.map((group) => (
-    <SidebarGroup key={group.id} className="py-1">
-      <SidebarGroupLabel className="px-3 text-[11px] font-bold tracking-[0.12em] text-sidebar-muted uppercase">{group.label}</SidebarGroupLabel>
+  return groups.map((group, index) => (
+    <SidebarGroup key={group.id} className={index > 0 ? "border-t border-sidebar-border pt-3" : "py-1"}>
+      {group.label && (
+        <SidebarGroupLabel className="px-3 text-[11px] font-bold tracking-[0.12em] text-sidebar-muted uppercase">{group.label}</SidebarGroupLabel>
+      )}
       <SidebarMenu className="gap-0.5">
         {group.items.map((item) => {
           const descriptionId = `nav-${item.icon}-description`;
           return (
             <SidebarMenuItem key={item.href}>
               <SidebarMenuButton
-                isActive={isActivePath(pathname, item.href)}
+                isActive={isActiveItem(pathname, item)}
                 tooltip={item.label}
                 className={sidebarItemClassName}
                 aria-describedby={descriptionId}
@@ -43,8 +45,8 @@ export function NavMain({ groups }: { groups: NavGroup[] }) {
                   <span className="flex items-center gap-1.5">
                     {item.label}
                     {item.todo && (
-                      <span className="size-2 rounded-full bg-coral" title="Falta configurar">
-                        <span className="sr-only"> (falta configurar)</span>
+                      <span className="size-2 rounded-full bg-coral" title="Hay algo para revisar">
+                        <span className="sr-only"> (tiene algo para revisar)</span>
                       </span>
                     )}
                   </span>

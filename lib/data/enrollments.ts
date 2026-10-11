@@ -2,9 +2,10 @@ import "server-only";
 
 import { and, asc, desc, eq, gt, inArray, isNull, notExists, sql, type SQL } from "drizzle-orm";
 
-import { db } from "@/db";
+import { db, type Executor } from "@/db";
 import { charges, clients, enrollments, payments, plans } from "@/db/schema";
-import { currentPeriodStart } from "@/lib/billing";
+import { currentPeriodStart, periodStart } from "@/lib/billing";
+import type { FirstCuotaChoice } from "@/lib/validation/memberships";
 import { isUniqueViolation } from "@/lib/db-errors";
 import { syncCharges } from "./charges";
 import { InvalidReferenceError, type TenantScope } from "./scope";
@@ -32,6 +33,7 @@ export async function listClientEnrollments(ctx: TenantScope, clientId: string) 
       planName: plans.name,
       intervalUnit: plans.intervalUnit,
       intervalCount: plans.intervalCount,
+      billingTiming: enrollments.billingTiming,
     })
     .from(enrollments)
     .innerJoin(plans, and(eq(plans.id, enrollments.planId), eq(plans.organizationId, enrollments.organizationId)))
@@ -47,31 +49,51 @@ export async function getEnrollment(ctx: TenantScope, id: string) {
 /** Enrolls a client in a plan and generates the cuotas due so far. */
 export async function enroll(
   ctx: TenantScope,
-  input: { clientId: string; planId: string; startDate: string; price: number | null; notes: string | null },
+  input: {
+    clientId: string;
+    planId: string;
+    startDate: string;
+    price: number | null;
+    notes: string | null;
+    /** When the first cuota is due; defaults to the plan's timing. */
+    firstCuota?: FirstCuotaChoice;
+    firstDueDate?: string;
+  },
   today: string,
+  exec: Executor = db,
 ) {
   const org = ctx.organization.id;
-  const [plan] = await db
+  const [plan] = await exec
     .select()
     .from(plans)
     .where(and(eq(plans.organizationId, org), eq(plans.id, input.planId), isNull(plans.archivedAt)));
   if (!plan) throw new InvalidReferenceError("planId");
-  const [client] = await db
+  const [client] = await exec
     .select({ id: clients.id })
     .from(clients)
     .where(and(eq(clients.organizationId, org), eq(clients.id, input.clientId), isNull(clients.archivedAt)));
   if (!client) throw new InvalidReferenceError("clientId");
 
+  // "start" / "end" choose the timing; "date" keeps the plan's timing with a
+  // custom first due date; "free" skips the first period entirely.
+  const choice = input.firstCuota ?? (plan.billingTiming === "arrears" ? "end" : "start");
+  const billingTiming = choice === "end" ? "arrears" : choice === "start" || choice === "free" ? "advance" : plan.billingTiming;
+  const firstDueDate = choice === "date" ? (input.firstDueDate ?? null) : null;
+  const billFrom = choice === "free" ? periodStart(input.startDate, plan.intervalUnit, plan.intervalCount, 1) : input.startDate;
+
   let id: string;
   try {
-    const [row] = await db
+    const [row] = await exec
       .insert(enrollments)
       .values({
         organizationId: org,
         clientId: client.id,
         planId: plan.id,
         startDate: input.startDate,
-        billFrom: input.startDate,
+        memberSince: input.startDate,
+        billFrom,
+        billingTiming,
+        firstDueDate,
         price: input.price ?? plan.price,
         currency: plan.currency,
         notes: input.notes,
@@ -82,7 +104,7 @@ export async function enroll(
     if (isUniqueViolation(error, "enrollments_running_unique")) throw new AlreadyEnrolledError();
     throw error;
   }
-  await syncCharges(ctx, { today, enrollmentId: id });
+  await syncCharges(ctx, { today, enrollmentId: id }, exec);
   return id;
 }
 

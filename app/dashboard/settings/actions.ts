@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 
 import { authorizeAction, FORBIDDEN, type ActionState } from "@/lib/actions";
 import { recordAudit } from "@/lib/audit";
+import { bookingRuleIssues } from "@/lib/config-rules";
+import { listServices } from "@/lib/data/services";
 import {
   ensureStaffForMember,
   TooManyStaffError,
@@ -120,6 +122,9 @@ export async function updateBookingRulesAction(
   if (!ctx) return FORBIDDEN;
   const parsed = parseForm(bookingRulesSchema, formData);
   if (!parsed.success) return { errors: parsed.errors };
+  const durations = (await listServices(ctx)).flatMap((service) => (service.durationMinutes ? [service.durationMinutes] : []));
+  const [problem] = bookingRuleIssues(parsed.data, { shortestServiceMinutes: durations.length > 0 ? Math.min(...durations) : null });
+  if (problem) return { errors: { [problem.field]: problem.message } };
   await updateBookingRules(ctx, parsed.data);
   revalidatePath("/dashboard", "layout");
   return { message: "Reglas de reserva guardadas" };

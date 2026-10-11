@@ -1,6 +1,6 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 
-import { asuncionDate, USERS } from "./helpers";
+import { USERS, asuncionDate, createSlotService, setTime, timePicker } from "./helpers";
 
 // One business, set up step by step: the tests depend on each other.
 test.describe.configure({ mode: "serial" });
@@ -53,7 +53,7 @@ test("owner sets hours, a service and public data", async ({ browser }) => {
   await page.goto("/dashboard");
   await expect(page.getByText("Falta configurar", { exact: true })).toBeVisible();
 
-  await page.goto("/dashboard/schedule");
+  await page.goto("/dashboard/schedule?modo=detalle");
   for (const weekday of [1, 2, 3, 4, 5, 6, 7]) {
     const day = page.getByTestId(`weekday-${weekday}`);
     if ((await day.getByText("Cerrado").count()) > 0) await day.getByRole("switch").click();
@@ -62,26 +62,25 @@ test("owner sets hours, a service and public data", async ({ browser }) => {
   for (const weekday of [1, 2, 3, 4, 5, 6, 7]) {
     const day = page.getByTestId(`weekday-${weekday}`);
     await day.getByRole("button", { name: /Quitar franja/ }).last().click();
-    await day.getByLabel(/desde/).first().selectOption("06:00");
-    await day.getByLabel(/hasta/).first().selectOption("23:00");
+    await setTime(timePicker(day, /: desde$/), "06:00");
+    await setTime(timePicker(day, /: hasta$/), "23:00");
   }
   await page.getByRole("button", { name: "Guardar horario" }).click();
   await expect(page.getByText("Horario guardado")).toBeVisible();
 
-  await page.goto("/dashboard/services/new");
-  await page.getByLabel("Nombre", { exact: true }).fill("Corte");
-  await page.getByLabel("Duración").selectOption("30");
-  await page.getByLabel("Precio").fill("50000");
-  await page.getByRole("button", { name: "Guardar servicio" }).click();
+  await createSlotService(page, { name: "Corte", minutes: 30, price: "50000" });
   await expect(page.getByText("Servicio creado")).toBeVisible();
 
+  // Settings show a summary; "Cambiar" opens just that part.
   await page.goto("/dashboard/settings?seccion=reservas");
+  await page.getByRole("link", { name: "Cambiar whatsapp y dirección" }).click();
   await page.getByLabel(/WhatsApp del negocio/).fill("0991 222 333");
   await page.getByLabel(/Dirección/).fill("Av. España 123, Asunción");
   await page.getByRole("button", { name: "Guardar datos públicos" }).click();
   await expect(page.getByText("Datos públicos guardados")).toBeVisible();
 
   // Let clients cancel up to the start, so the test doesn't depend on the time of day.
+  await page.goto("/dashboard/settings?seccion=reservas&editar=reglas");
   await page.getByLabel("Cancelación online").selectOption("0");
   await page.getByRole("button", { name: "Guardar reglas" }).click();
   await expect(page.getByText("Reglas de reserva guardadas")).toBeVisible();
@@ -166,7 +165,7 @@ test("two clients race for the same slot: one gets it, the other is told", async
 
 test("manual confirmation: bookings arrive pending and the owner confirms", async ({ browser }) => {
   const owner = await ownerPage(browser);
-  await owner.page.goto("/dashboard/settings?seccion=reservas");
+  await owner.page.goto("/dashboard/settings?seccion=reservas&editar=reglas");
   const rules = owner.page.locator("form").filter({ has: owner.page.getByRole("switch", { name: "Confirmar turnos automáticamente" }) });
   await rules.getByRole("switch", { name: "Confirmar turnos automáticamente" }).click();
   await rules.getByRole("button", { name: "Guardar reglas" }).click();

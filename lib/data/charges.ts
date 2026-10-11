@@ -1,13 +1,13 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, gte, ilike, inArray, lt, lte, or, sql, sum, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, or, sql, sum, type SQL } from "drizzle-orm";
 
-import { db } from "@/db";
+import { db, type Executor } from "@/db";
 import { charges, clients, enrollments, payments, plans } from "@/db/schema";
-import { addDays, chargeStatus, periodsFor, type DerivedChargeStatus } from "@/lib/billing";
+import { addDays, chargeStatus, overdueCutoff, periodsFor, type DerivedChargeStatus, type Grace } from "@/lib/billing";
 import { zonedToUtc } from "@/lib/datetime";
 import type { PaymentMethod } from "@/lib/membership-constants";
-import { likePattern, PAGE_SIZE, type TenantScope } from "./scope";
+import { InvalidReferenceError, likePattern, PAGE_SIZE, type TenantScope } from "./scope";
 
 /** How far ahead cuotas are generated, so next week's dues are visible. */
 export const GENERATE_AHEAD_DAYS = 7;
@@ -23,17 +23,28 @@ function scoped(ctx: TenantScope, ...conditions: (SQL | undefined)[]) {
   return and(eq(charges.organizationId, ctx.organization.id), ...conditions);
 }
 
+/** The business's tolerance before a cuota is overdue. */
+export function graceOf(settings: Pick<TenantScope["settings"], "graceCount" | "graceUnit">): Grace {
+  return { count: settings.graceCount, unit: settings.graceUnit };
+}
+
 /**
- * Creates the cuotas of active enrollments up to `today + 7 days`.
+ * Creates the cuotas of active enrollments due up to `today + 7 days`.
  * Idempotent: (enrollment, period start) is unique, so re-runs insert nothing.
  */
-export async function syncCharges(ctx: TenantScope, { today, enrollmentId }: { today: string; enrollmentId?: string }) {
-  const rows = await db
+export async function syncCharges(
+  ctx: TenantScope,
+  { today, enrollmentId }: { today: string; enrollmentId?: string },
+  exec: Executor = db,
+) {
+  const rows = await exec
     .select({
       id: enrollments.id,
       clientId: enrollments.clientId,
       startDate: enrollments.startDate,
       billFrom: enrollments.billFrom,
+      billingTiming: enrollments.billingTiming,
+      firstDueDate: enrollments.firstDueDate,
       price: enrollments.price,
       currency: enrollments.currency,
       intervalUnit: plans.intervalUnit,
@@ -57,6 +68,8 @@ export async function syncCharges(ctx: TenantScope, { today, enrollmentId }: { t
       unit: enrollment.intervalUnit,
       count: enrollment.intervalCount,
       until,
+      timing: enrollment.billingTiming,
+      firstDueDate: enrollment.firstDueDate,
     }).map((period) => ({
       organizationId: ctx.organization.id,
       enrollmentId: enrollment.id,
@@ -67,7 +80,7 @@ export async function syncCharges(ctx: TenantScope, { today, enrollmentId }: { t
     })),
   );
   if (values.length === 0) return 0;
-  const inserted = await db
+  const inserted = await exec
     .insert(charges)
     .values(values)
     .onConflictDoNothing({ target: [charges.enrollmentId, charges.periodStart] })
@@ -75,12 +88,45 @@ export async function syncCharges(ctx: TenantScope, { today, enrollmentId }: { t
   return inserted.length;
 }
 
+/** A one-off charge (matrícula, deuda vieja, clase suelta), not tied to a plan. */
+export async function createOneOffCharge(
+  ctx: TenantScope,
+  input: { clientId: string; concept: string; amount: number; dueDate: string; note: string | null },
+  exec: Executor = db,
+) {
+  const [client] = await exec
+    .select({ id: clients.id })
+    .from(clients)
+    .where(and(eq(clients.organizationId, ctx.organization.id), eq(clients.id, input.clientId), isNull(clients.archivedAt)));
+  if (!client) throw new InvalidReferenceError("clientId");
+  const [row] = await exec
+    .insert(charges)
+    .values({
+      organizationId: ctx.organization.id,
+      kind: "one_off",
+      clientId: client.id,
+      concept: input.concept,
+      dueDate: input.dueDate,
+      amount: input.amount,
+      currency: ctx.settings.currency,
+      note: input.note,
+    })
+    .returning({ id: charges.id });
+  return row.id;
+}
+
 const paidSubquery = sql<number>`coalesce((
   select sum(${payments.amount})::int from ${payments} where ${payments.chargeId} = ${charges.id}
 ), 0)`;
 
+/** What the charge is for: the plan's name, or the concept of a one-off charge or part. */
+const chargeLabel = sql<string>`coalesce(${charges.concept}, ${plans.name}, 'Cobro')`;
+
 const chargeColumns = {
   id: charges.id,
+  kind: charges.kind,
+  concept: charges.concept,
+  parentChargeId: charges.parentChargeId,
   enrollmentId: charges.enrollmentId,
   clientId: charges.clientId,
   periodStart: charges.periodStart,
@@ -94,7 +140,8 @@ const chargeColumns = {
   amountPaid: paidSubquery,
   clientName: clients.name,
   clientPhone: clients.phone,
-  planName: plans.name,
+  /** Plan name, or the concept of a one-off charge or part. */
+  planName: chargeLabel,
 };
 
 function joined() {
@@ -102,8 +149,8 @@ function joined() {
     .select(chargeColumns)
     .from(charges)
     .innerJoin(clients, and(eq(clients.id, charges.clientId), eq(clients.organizationId, charges.organizationId)))
-    .innerJoin(enrollments, and(eq(enrollments.id, charges.enrollmentId), eq(enrollments.organizationId, charges.organizationId)))
-    .innerJoin(plans, and(eq(plans.id, enrollments.planId), eq(plans.organizationId, enrollments.organizationId)));
+    .leftJoin(enrollments, and(eq(enrollments.id, charges.enrollmentId), eq(enrollments.organizationId, charges.organizationId)))
+    .leftJoin(plans, and(eq(plans.id, enrollments.planId), eq(plans.organizationId, enrollments.organizationId)));
 }
 
 type ChargeRow = Awaited<ReturnType<ReturnType<typeof joined>["where"]>>[number];
@@ -112,7 +159,7 @@ export type ChargeWithStatus = ChargeRow & { derived: DerivedChargeStatus; remai
 function withStatus(ctx: TenantScope, today: string) {
   return (row: ChargeRow): ChargeWithStatus => ({
     ...row,
-    derived: chargeStatus(row, row.amountPaid, today, ctx.settings.graceDays),
+    derived: chargeStatus(row, row.amountPaid, today, graceOf(ctx.settings)),
     remaining: Math.max(0, row.amount - row.amountPaid),
   });
 }
@@ -123,7 +170,7 @@ export async function listCharges(
   ctx: TenantScope,
   { filter, q = "", page = 1, today }: { filter: ChargeFilter; q?: string; page?: number; today: string },
 ) {
-  const overdueBefore = addDays(today, -ctx.settings.graceDays); // due < this → overdue
+  const overdueBefore = overdueCutoff(today, graceOf(ctx.settings)); // due < this → overdue
   const search = q.trim();
   const digits = search.replace(/\D/g, "").replace(/^0+/, "");
   const where = scoped(
@@ -134,7 +181,7 @@ export async function listCharges(
     search
       ? or(
           ilike(clients.name, likePattern(search)),
-          ilike(plans.name, likePattern(search)),
+          ilike(chargeLabel, likePattern(search)),
           digits.length >= 3 ? ilike(clients.phone, likePattern(digits)) : undefined,
         )
       : undefined,
@@ -152,8 +199,8 @@ export async function listCharges(
       .select({ total: count() })
       .from(charges)
       .innerJoin(clients, and(eq(clients.id, charges.clientId), eq(clients.organizationId, charges.organizationId)))
-      .innerJoin(enrollments, and(eq(enrollments.id, charges.enrollmentId), eq(enrollments.organizationId, charges.organizationId)))
-      .innerJoin(plans, and(eq(plans.id, enrollments.planId), eq(plans.organizationId, enrollments.organizationId)))
+      .leftJoin(enrollments, and(eq(enrollments.id, charges.enrollmentId), eq(enrollments.organizationId, charges.organizationId)))
+      .leftJoin(plans, and(eq(plans.id, enrollments.planId), eq(plans.organizationId, enrollments.organizationId)))
       .where(where),
   ]);
   return { rows: rows.map(withStatus(ctx, today)), total, page, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)) };
@@ -184,7 +231,7 @@ export async function monthSummary(ctx: TenantScope, today: string) {
   const tz = ctx.settings.timezone;
   const monthStart = `${today.slice(0, 7)}-01`;
   const nextMonth = addDays(`${today.slice(0, 7)}-28`, 4).slice(0, 7) + "-01";
-  const overdueBefore = addDays(today, -ctx.settings.graceDays);
+  const overdueBefore = overdueCutoff(today, graceOf(ctx.settings));
 
   const [[collected], [toCollect], [overdue], [members]] = await Promise.all([
     db
@@ -308,7 +355,7 @@ export async function voidCharge(ctx: TenantScope, id: string) {
 
 /** Overdue cuotas count + amount, for Inicio. */
 export async function overdueSummary(ctx: TenantScope, today: string) {
-  const overdueBefore = addDays(today, -ctx.settings.graceDays);
+  const overdueBefore = overdueCutoff(today, graceOf(ctx.settings));
   const [row] = await db
     .select({ n: count(), total: sql<number>`coalesce(sum(${charges.amount} - ${paidSubquery}), 0)::int` })
     .from(charges)

@@ -14,6 +14,8 @@ import {
 } from "drizzle-orm/pg-core";
 
 import {
+  BILLING_TIMINGS,
+  CHARGE_KINDS,
   CHARGE_STATUSES,
   ENROLLMENT_STATUSES,
   INTERVAL_UNITS,
@@ -38,6 +40,8 @@ export const plans = pgTable(
     currency: text().notNull(),
     intervalUnit: text({ enum: INTERVAL_UNITS }).notNull(),
     intervalCount: integer().notNull().default(1),
+    /** Default for new enrollments: pay at the start or the end of each period. */
+    billingTiming: text({ enum: BILLING_TIMINGS }).notNull().default("advance"),
     archivedAt: timestamp({ withTimezone: true }),
     ...timestamps,
   },
@@ -46,12 +50,13 @@ export const plans = pgTable(
     index("plans_org_name_idx").on(t.organizationId, t.name),
     check("plans_price_non_negative", sql`${t.price} >= 0`),
     check("plans_interval_unit", inList("interval_unit", INTERVAL_UNITS)),
-    check("plans_interval_count", sql`${t.intervalCount} between 1 and 12`),
+    check("plans_interval_count", sql`${t.intervalCount} between 1 and 365`),
+    check("plans_billing_timing", inList("billing_timing", BILLING_TIMINGS)),
     check("plans_currency_format", sql`${t.currency} ~ '^[A-Z]{3}$'`),
   ],
 );
 
-/** A client subscribed to a plan. Cuotas fall due on the start day of each period. */
+/** A client subscribed to a plan. Cuotas fall due at the start (or end) of each period. */
 export const enrollments = pgTable(
   "enrollments",
   {
@@ -67,6 +72,12 @@ export const enrollments = pgTable(
      * after a pause, so paused months are not billed).
      */
     billFrom: date().notNull(),
+    /** Pay at the start ("advance") or the end ("arrears") of each period. */
+    billingTiming: text({ enum: BILLING_TIMINGS }).notNull().default("advance"),
+    /** Optional due date of the very first cuota (e.g. "paga el 15"). */
+    firstDueDate: date(),
+    /** "Socio desde": kept when the billing day is re-anchored (startDate moves). */
+    memberSince: date(),
     /** Snapshot of the plan price (editable: personal discounts). */
     price: integer().notNull(),
     currency: text().notNull(),
@@ -95,19 +106,31 @@ export const enrollments = pgTable(
     check("enrollments_status", inList("status", ENROLLMENT_STATUSES)),
     check("enrollments_price_non_negative", sql`${t.price} >= 0`),
     check("enrollments_bill_from", sql`${t.billFrom} >= ${t.startDate}`),
+    check("enrollments_billing_timing", inList("billing_timing", BILLING_TIMINGS)),
+    check("enrollments_first_due", sql`${t.firstDueDate} is null or ${t.firstDueDate} >= ${t.startDate}`),
   ],
 );
 
-/** A cuota: one billing period of an enrollment. */
+/**
+ * Something a client owes: a cuota (one billing period of an enrollment), a
+ * one-off charge, or a part of a split cuota.
+ */
 export const charges = pgTable(
   "charges",
   {
     id: uuid().primaryKey().defaultRandom(),
     organizationId: organizationIdColumn(),
-    enrollmentId: uuid().notNull(),
+    kind: text({ enum: CHARGE_KINDS }).notNull().default("cuota"),
+    /** Null for one-off charges. */
+    enrollmentId: uuid(),
     clientId: uuid().notNull(),
-    periodStart: date().notNull(),
-    periodEnd: date().notNull(),
+    /** Cuotas only. */
+    periodStart: date(),
+    periodEnd: date(),
+    /** What it is for (one-off charges and parts), e.g. "Matrícula". */
+    concept: text(),
+    /** Parts: the cuota they were split from. */
+    parentChargeId: uuid(),
     dueDate: date().notNull(),
     amount: integer().notNull(),
     currency: text().notNull(),
@@ -131,11 +154,23 @@ export const charges = pgTable(
       columns: [t.organizationId, t.clientId],
       foreignColumns: [clients.organizationId, clients.id],
     }),
+    foreignKey({
+      name: "charges_parent_fk",
+      columns: [t.organizationId, t.parentChargeId],
+      foreignColumns: [t.organizationId, t.id],
+    }),
     index("charges_org_due_idx").on(t.organizationId, t.dueDate),
     index("charges_org_client_idx").on(t.organizationId, t.clientId),
     check("charges_status", inList("status", CHARGE_STATUSES)),
     check("charges_amount_non_negative", sql`${t.amount} >= 0`),
     check("charges_period_order", sql`${t.periodStart} < ${t.periodEnd}`),
+    check("charges_kind", inList("kind", CHARGE_KINDS)),
+    check(
+      "charges_kind_fields",
+      sql`(${t.kind} = 'cuota' and ${t.enrollmentId} is not null and ${t.periodStart} is not null and ${t.periodEnd} is not null)
+        or (${t.kind} = 'one_off' and ${t.concept} is not null and ${t.periodStart} is null)
+        or (${t.kind} = 'part' and ${t.concept} is not null and ${t.parentChargeId} is not null and ${t.periodStart} is null)`,
+    ),
   ],
 );
 

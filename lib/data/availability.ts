@@ -5,7 +5,7 @@ import { and, asc, eq, gt, inArray, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, availabilityRules, blockedSlots, staff } from "@/db/schema";
 import { ACTIVE_STATUSES } from "@/lib/appointment-status";
-import type { StaffAvailability } from "@/lib/availability";
+import { longestBookableMinutes, type StaffAvailability } from "@/lib/availability";
 import { toHHmm } from "@/lib/datetime";
 import type { AvailabilityRuleInput } from "@/lib/validation/staff";
 import { InvalidReferenceError, type TenantScope } from "./scope";
@@ -30,6 +30,30 @@ export async function getWeeklySchedule(ctx: TenantScope, staffId: string) {
     startTime: toHHmm(row.startTime),
     endTime: toHHmm(row.endTime),
   }));
+}
+
+/**
+ * Longest turno (minutes) each staff member could take on any weekday, from
+ * their first opening to their last closing. Drives the "nobody can book
+ * this long" warning in the service form.
+ */
+export async function longestTurnoByStaff(ctx: TenantScope): Promise<Record<string, number>> {
+  const rows = await db
+    .select({
+      staffId: availabilityRules.staffId,
+      weekday: availabilityRules.weekday,
+      startTime: availabilityRules.startTime,
+      endTime: availabilityRules.endTime,
+    })
+    .from(availabilityRules)
+    .where(eq(availabilityRules.organizationId, ctx.organization.id));
+  const byStaff = new Map<string, { weekday: number; startTime: string; endTime: string }[]>();
+  for (const row of rows) {
+    const list = byStaff.get(row.staffId) ?? [];
+    list.push({ weekday: row.weekday, startTime: toHHmm(row.startTime), endTime: toHHmm(row.endTime) });
+    byStaff.set(row.staffId, list);
+  }
+  return Object.fromEntries([...byStaff].map(([staffId, rules]) => [staffId, longestBookableMinutes(rules)]));
 }
 
 /** Replaces the whole weekly schedule of a staff member atomically. */

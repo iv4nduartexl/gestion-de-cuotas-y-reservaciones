@@ -1,4 +1,4 @@
-import { AlertTriangleIcon, ChevronRightIcon, ClipboardListIcon, SearchIcon, TrendingUpIcon, UsersIcon, WalletIcon } from "lucide-react";
+import { AlertTriangleIcon, ChevronRightIcon, ClipboardListIcon, PlusIcon, SearchIcon, TrendingUpIcon, UsersIcon, WalletIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
@@ -64,7 +64,15 @@ async function Cuotas({ searchParams }: { searchParams: PageProps<"/dashboard/cu
     return `/dashboard/cuotas?${search.toString()}`;
   };
 
-  if (plans.length === 0) {
+  const canCreate = can(ctx, { enrollment: ["create"], client: ["create"] });
+  const newChargeButton = canCreate && (
+    <Link href="/dashboard/cuotas/new" className={buttonVariants()}>
+      <PlusIcon aria-hidden="true" /> Nuevo cobro
+    </Link>
+  );
+
+  // Without plans and without one-off charges there's nothing to list yet.
+  if (plans.length === 0 && result.total === 0 && !q && filter !== "todas" && summary.collected === 0) {
     return (
       <>
         <PageHeader help={{ section: "cuotas", settings: ctx.settings, open: true }} title="Cuotas" description={`Quién pagó, quién debe y quién está vencido, mes a mes.`} />
@@ -73,9 +81,16 @@ async function Cuotas({ searchParams }: { searchParams: PageProps<"/dashboard/cu
           title="Primero creá un plan"
           description={`Un plan es lo que cobrás de forma periódica, por ejemplo “Musculación · Gs. 150.000 por mes”. Después inscribís a tus ${words.many} y Agenda arma sus cuotas solo.`}
           action={
-            <Link href="/dashboard/planes/new" className={buttonVariants({ size: "lg" })}>
-              Crear mi primer plan
-            </Link>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Link href="/dashboard/planes/new" className={buttonVariants({ size: "lg" })}>
+                Crear mi primer plan
+              </Link>
+              {canCreate && (
+                <Link href="/dashboard/cuotas/new" className={buttonVariants({ size: "lg", variant: "outline" })}>
+                  Cobrar algo una sola vez
+                </Link>
+              )}
+            </div>
           }
         />
       </>
@@ -92,6 +107,7 @@ async function Cuotas({ searchParams }: { searchParams: PageProps<"/dashboard/cu
         help={{ section: "cuotas", settings: ctx.settings, open: summary.activeMembers === 0 }}
         title="Cuotas"
         description={`Quién pagó, quién debe y quién está vencido. Las cuotas se generan solas según el plan de cada ${words.one}.`}
+        actions={newChargeButton}
       />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

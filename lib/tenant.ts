@@ -27,6 +27,8 @@ export class NoActiveOrganizationError extends Error {
 export type TenantContext = {
   user: { id: string; name: string; email: string; image: string | null };
   sessionId: string;
+  /** Set while the developer admin is acting as this user (lib/admin.ts). */
+  impersonation: { adminId: string; expiresAt: Date } | null;
   organization: { id: string; name: string; slug: string };
   role: OrganizationRole;
   memberId: string;
@@ -102,6 +104,9 @@ export const getTenantContext = cache(async (): Promise<TenantContext> => {
       image: user.image ?? null,
     },
     sessionId: session.session.id,
+    impersonation: session.session.impersonatedBy
+      ? { adminId: session.session.impersonatedBy, expiresAt: session.session.expiresAt }
+      : null,
     organization: row.organization,
     role: row.role,
     memberId: row.memberId,

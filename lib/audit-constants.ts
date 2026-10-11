@@ -4,6 +4,7 @@ export const AUDIT_ACTIONS = {
   "payment.recorded": "Registró un pago",
   "payment.deleted": "Deshizo un pago",
   "charge.voided": "Anuló una cuota",
+  "charge.created": "Creó un cobro único",
   "enrollment.cancelled": "Canceló una membresía",
   "settings.profile": "Cambió los datos del negocio",
   "settings.slug": "Cambió el link de reservas",
@@ -16,6 +17,11 @@ export const AUDIT_ACTIONS = {
   "data.exported": "Descargó datos",
   "business.deletion_requested": "Pidió eliminar el negocio",
   "business.deletion_cancelled": "Canceló la eliminación del negocio",
+  "admin.impersonation_started": "Soporte entró a la cuenta",
+  "admin.impersonation_stopped": "Soporte salió de la cuenta",
 } as const;
+
+/** Who shows in Actividad when the developer admin acted inside a business. */
+export const ADMIN_ACTOR_NAME = "Soporte (admin)";
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

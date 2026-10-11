@@ -5,6 +5,9 @@ export const SLUG_MAX_LENGTH = 48;
 
 // Top-level paths the app uses (or will use). Public booking pages live at
 // /[slug], so these can never be business slugs.
+/** Lowercase language prefixes browsers or old links may add (/es, /es-py, /en…). */
+export const LANGUAGE_PREFIXES = ["es", "es-py", "es-ar", "es-es", "en", "en-us", "pt", "pt-br"];
+
 const RESERVED_SLUGS = new Set([
   "about",
   "admin",
@@ -32,6 +35,17 @@ const RESERVED_SLUGS = new Set([
   "terms",
   "verify-email",
   "www",
+  // Our own routes (current and planned).
+  "baja",
+  "cuenta",
+  "invitacion",
+  "media",
+  "privacidad",
+  "reportes",
+  "terminos",
+  // Language prefixes: they redirect to the page without the prefix
+  // (next.config.ts), so a business can never use them as its link.
+  ...LANGUAGE_PREFIXES,
 ]);
 
 /** "Peluquería Doña Ana" -> "peluqueria-dona-ana" */

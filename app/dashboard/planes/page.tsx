@@ -39,7 +39,8 @@ async function Plans() {
 
   return (
     <>
-      <PageHeader help={{ section: "plans", settings: ctx.settings, open: rows.length === 0 }} title="Planes" description={`Lo que cobrás de forma periódica a tus ${words.many}.`} actions={rows.length > 0 && newButton} />
+      <PageHeader back={{ href: "/dashboard/negocio", label: "Mi negocio" }}
+        help={{ section: "plans", settings: ctx.settings, open: rows.length === 0 }} title="Planes" description={`Lo que cobrás de forma periódica a tus ${words.many}.`} actions={rows.length > 0 && newButton} />
       {rows.length === 0 ? (
         <EmptyState
           icon={ClipboardListIcon}

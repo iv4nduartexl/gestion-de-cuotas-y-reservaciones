@@ -5,14 +5,28 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { turnoTiming } from "@/lib/appointment-status";
-import { bookAppointment, BookingReferenceError, getAvailability, hashManageToken, SlotUnavailableError } from "@/lib/booking";
+import {
+  bookAppointment,
+  BookingReferenceError,
+  bookStay,
+  getAvailability,
+  hashManageToken,
+  SlotUnavailableError,
+  StayRulesError,
+} from "@/lib/booking";
 import { clientIpFrom } from "@/lib/client-ip";
 import { countUpcomingForPhone, getAppointmentByTokenHash, setAppointmentStatus } from "@/lib/data/appointments";
 import { hashIp, isRateLimited, LIMITS, recordAttempt } from "@/lib/data/booking-limits";
-import { getPublicBusiness, getPublicCatalog } from "@/lib/data/public";
+import { getPublicBusiness, getPublicCatalog, type PublicBusiness } from "@/lib/data/public";
+import { getStayService, loadOccupiedDates } from "@/lib/data/stays";
 import { addDaysToDate, todayInZone } from "@/lib/datetime";
 import { parseForm, type FieldErrors } from "@/lib/forms";
-import { availabilityQuerySchema, publicBookingSchema } from "@/lib/validation/booking";
+import {
+  availabilityQuerySchema,
+  publicBookingSchema,
+  publicStayBookingSchema,
+  stayCalendarQuerySchema,
+} from "@/lib/validation/booking";
 
 const DAYS_PER_PAGE = 14;
 
@@ -53,6 +67,23 @@ async function clientIp() {
   return clientIpFrom(await headers());
 }
 
+/** Anti-abuse shared by every public booking: rate limits and a cap of upcoming bookings per phone. */
+async function guardPublicBooking(business: PublicBusiness, phone: string): Promise<BookingState | null> {
+  const ipHash = hashIp(await clientIp());
+  if (await isRateLimited(business, ipHash, phone)) {
+    return { errors: { form: "Hiciste muchos intentos seguidos. Esperá unos minutos y volvé a probar." } };
+  }
+  await recordAttempt(business, ipHash, phone);
+  if ((await countUpcomingForPhone(business, phone)) >= LIMITS.upcomingPerPhone) {
+    return {
+      errors: {
+        form: `Ya tenés ${LIMITS.upcomingPerPhone} reservas con este teléfono. Para otra, escribile al negocio.`,
+      },
+    };
+  }
+  return null;
+}
+
 export async function createBookingAction(
   slug: string,
   _prev: BookingState,
@@ -68,19 +99,8 @@ export async function createBookingAction(
   }
   const input = parsed.data;
 
-  const ipHash = hashIp(await clientIp());
-  if (await isRateLimited(business, ipHash, input.phone)) {
-    return { errors: { form: "Hiciste muchos intentos seguidos. Esperá unos minutos y volvé a probar." } };
-  }
-  await recordAttempt(business, ipHash, input.phone);
-
-  if ((await countUpcomingForPhone(business, input.phone)) >= LIMITS.upcomingPerPhone) {
-    return {
-      errors: {
-        form: `Ya tenés ${LIMITS.upcomingPerPhone} turnos reservados con este teléfono. Para otro turno, escribile al negocio.`,
-      },
-    };
-  }
+  const blocked = await guardPublicBooking(business, input.phone);
+  if (blocked) return blocked;
 
   let token: string;
   try {
@@ -101,6 +121,73 @@ export async function createBookingAction(
     }
     if (error instanceof BookingReferenceError) {
       return { errors: { form: "Ese servicio ya no está disponible. Recargá la página." } };
+    }
+    throw error;
+  }
+  redirect(`/${slug}/turno/${token}`);
+}
+
+/** Taken dates plus the window: entries up to `lastCheckIn`, exits up to `lastDate`. */
+export type StayCalendar = { taken: string[]; firstDate: string; lastDate: string; lastCheckIn: string };
+
+/** Taken dates of a rental for the public range calendar (about three months from `fromDate`). */
+export async function getStayCalendarAction(slug: string, query: { serviceId: string; fromDate: string }): Promise<StayCalendar | null> {
+  const business = await getPublicBusiness(slug);
+  if (!business) return null;
+  const parsed = stayCalendarQuerySchema.safeParse(query);
+  if (!parsed.success) return null;
+  const service = await getStayService(business, parsed.data.serviceId);
+  if (!service) return null;
+  const today = todayInZone(business.settings.timezone);
+  // Check-ins up to the booking horizon; the stay itself may end later.
+  const lastDate = addDaysToDate(today, business.settings.maxDaysAhead + (service.maxStay ?? 31));
+  const from = parsed.data.fromDate < today ? today : parsed.data.fromDate;
+  const to = addDaysToDate(from, 100) < lastDate ? addDaysToDate(from, 100) : lastDate;
+  const taken = await loadOccupiedDates(business, service, from, to);
+  return { taken: [...taken], firstDate: today, lastDate, lastCheckIn: addDaysToDate(today, business.settings.maxDaysAhead) };
+}
+
+export async function createStayBookingAction(slug: string, _prev: BookingState, formData: FormData): Promise<BookingState> {
+  const business = await getPublicBusiness(slug);
+  if (!business) return { errors: { form: "Este negocio no está tomando reservas." } };
+  const parsed = parseForm(publicStayBookingSchema, formData);
+  if (!parsed.success) {
+    if (parsed.errors.website) return { errors: { form: "No pudimos tomar tu reserva." } };
+    return { errors: parsed.errors };
+  }
+  const input = parsed.data;
+  const blocked = await guardPublicBooking(business, input.phone);
+  if (blocked) return blocked;
+
+  let token: string;
+  try {
+    const booked = await bookStay(business, {
+      serviceId: input.serviceId,
+      checkIn: input.checkIn,
+      checkOut: input.checkOut,
+      client: { name: input.name, phone: input.phone },
+      status: business.settings.autoConfirmBookings ? "confirmed" : "pending",
+      source: "online",
+      notes: input.notes,
+      withManageToken: true,
+    });
+    token = booked.token!;
+  } catch (error) {
+    if (error instanceof SlotUnavailableError) {
+      return { slotTaken: true, errors: { checkIn: "Esas fechas se acaban de ocupar. Elegí otras, por favor." } };
+    }
+    if (error instanceof StayRulesError) {
+      const messages = {
+        order: "La salida tiene que ser después de la entrada.",
+        too_short: "La estadía es más corta que el mínimo.",
+        too_long: "La estadía es más larga que el máximo.",
+        past: "Esa fecha ya pasó o está muy cerca. Elegí otra.",
+        too_far: "Todavía no se puede reservar tan adelante.",
+      };
+      return { errors: { checkIn: messages[error.reason] } };
+    }
+    if (error instanceof BookingReferenceError) {
+      return { errors: { form: "Este alquiler ya no está disponible. Recargá la página." } };
     }
     throw error;
   }

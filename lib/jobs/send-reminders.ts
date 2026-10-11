@@ -109,11 +109,11 @@ async function buildMessage(row: Row): Promise<AppointmentReminderData | ChargeR
       currency: charges.currency,
       dueDate: charges.dueDate,
       paid: sql<number>`coalesce((select sum(amount)::int from payments where payments.charge_id = ${charges.id}), 0)`,
-      planName: plans.name,
+      planName: sql<string>`coalesce(${charges.concept}, ${plans.name}, 'Cobro')`,
     })
     .from(charges)
-    .innerJoin(enrollments, and(eq(enrollments.id, charges.enrollmentId), eq(enrollments.organizationId, charges.organizationId)))
-    .innerJoin(plans, and(eq(plans.id, enrollments.planId), eq(plans.organizationId, enrollments.organizationId)))
+    .leftJoin(enrollments, and(eq(enrollments.id, charges.enrollmentId), eq(enrollments.organizationId, charges.organizationId)))
+    .leftJoin(plans, and(eq(plans.id, enrollments.planId), eq(plans.organizationId, enrollments.organizationId)))
     .where(eq(charges.id, row.chargeId!));
   if (!charge || charge.status !== "pending") return null;
   return {

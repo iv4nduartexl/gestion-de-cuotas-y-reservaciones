@@ -46,8 +46,10 @@ async function ChargeDetail({ params }: { params: PageProps<"/dashboard/cuotas/[
   const canVoid = can(ctx, { payment: ["void"] }) && open && charge.amountPaid === 0;
 
   const rows: [string, React.ReactNode][] = [
-    ["Plan", charge.planName],
-    ["Período", `${date(charge.periodStart)} al ${date(addDays(charge.periodEnd, -1))}`],
+    [charge.kind === "cuota" ? "Plan" : "Concepto", charge.planName],
+    ...(charge.periodStart && charge.periodEnd
+      ? ([["Período", `${date(charge.periodStart)} al ${date(addDays(charge.periodEnd, -1))}`]] as [string, React.ReactNode][])
+      : []),
     ["Vence", date(charge.dueDate)],
     ["Monto", money(charge.amount)],
     ["Pagado", money(charge.amountPaid)],

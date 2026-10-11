@@ -36,7 +36,7 @@ async function client(t: Tenant, email: string | null) {
 
 async function turno(t: Tenant, clientId: string, startsAt: Date) {
   const person = await createStaff(t, { name: `Staff ${++seq}`, memberId: null });
-  const service = await createService(t, { name: "Corte", description: null, durationMinutes: 30, price: 50000, staffIds: [person.id] });
+  const service = await createService(t, { name: "Corte", description: null, bookingType: "slot", durationMinutes: 30, price: 50000, staffIds: [person.id] });
   const [row] = await db
     .insert(appointments)
     .values({
@@ -98,7 +98,7 @@ describe("planning and sending reminders", () => {
 
   it("plans cuota reminders and skips them once paid", async () => {
     const member = await client(a, null);
-    const plan = await createPlan(a, { name: "Mensual", description: null, price: 150000, intervalUnit: "month", intervalCount: 1 });
+    const plan = await createPlan(a, { name: "Mensual", description: null, price: 150000, intervalUnit: "month", intervalCount: 1, billingTiming: "advance" });
     const enrollmentId = await enroll(a, { clientId: member.id, planId: plan.id, startDate: "2030-01-10", price: null, notes: null }, TODAY);
     expect(await planRemindersFor(a, NOW)).toBe(1);
     const [row] = await db.select().from(reminders).where(eq(reminders.clientId, member.id));
@@ -157,7 +157,7 @@ describe("payment webhooks (fake provider)", () => {
 
   async function subscribed(t: Tenant, startDate: string) {
     const member = await client(t, null);
-    const plan = await createPlan(t, { name: "Online", description: null, price: 100000, intervalUnit: "month", intervalCount: 1 });
+    const plan = await createPlan(t, { name: "Online", description: null, price: 100000, intervalUnit: "month", intervalCount: 1, billingTiming: "advance" });
     const enrollmentId = await enroll(t, { clientId: member.id, planId: plan.id, startDate, price: null, notes: null }, "2030-01-07");
     const externalId = `fake_sub_${++seq}`;
     await db.insert(providerSubscriptions).values({ organizationId: t.organization.id, enrollmentId, provider: "fake", externalId, status: "active" });

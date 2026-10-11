@@ -4,13 +4,30 @@ import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { authorizeAction, FORBIDDEN, parseId, type ActionState } from "@/lib/actions";
+import { slotServiceIssues } from "@/lib/config-rules";
+import { longestTurnoByStaff } from "@/lib/data/availability";
 import { InvalidReferenceError } from "@/lib/data/scope";
 import { createService, setServiceArchived, updateService } from "@/lib/data/services";
 import { withFlash } from "@/lib/flash";
 import { parseForm } from "@/lib/forms";
-import { serviceSchema } from "@/lib/validation/services";
+import type { TenantContext } from "@/lib/tenant";
+import { serviceSchema, type ServiceInput } from "@/lib/validation/services";
 
 const APPOINTMENTS = { product: "appointments" } as const;
+
+/**
+ * A turno service must fit in the longest open day of whoever does it
+ * (otherwise nobody can ever book it). No hours yet → nothing to check.
+ */
+async function durationProblem(ctx: TenantContext, input: ServiceInput): Promise<ActionState | null> {
+  if (input.bookingType !== "slot") return null;
+  const longestByStaff = await longestTurnoByStaff(ctx);
+  const people = ctx.settings.teamMode === "solo" ? Object.keys(longestByStaff) : input.staffIds;
+  const known = people.map((id) => longestByStaff[id]).filter((minutes) => minutes !== undefined);
+  const longest = known.length > 0 ? Math.max(...known) : null;
+  const [problem] = slotServiceIssues({ durationMinutes: input.durationMinutes }, { longestMinutes: longest });
+  return problem ? { errors: { durationMinutes: problem.message } } : null;
+}
 const INVALID_STAFF: ActionState = {
   errors: { staffIds: "Alguna de las personas elegidas ya no está disponible." },
 };
@@ -25,6 +42,8 @@ export async function createServiceAction(
     arrays: ["staffIds"],
   });
   if (!parsed.success) return { errors: parsed.errors };
+  const problem = await durationProblem(ctx, parsed.data);
+  if (problem) return problem;
 
   try {
     await createService(ctx, parsed.data);
@@ -48,6 +67,8 @@ export async function updateServiceAction(
     arrays: ["staffIds"],
   });
   if (!parsed.success) return { errors: parsed.errors };
+  const problem = await durationProblem(ctx, parsed.data);
+  if (problem) return problem;
 
   try {
     if (!(await updateService(ctx, id, parsed.data))) {

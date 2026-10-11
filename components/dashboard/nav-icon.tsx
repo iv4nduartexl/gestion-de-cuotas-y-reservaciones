@@ -1,5 +1,6 @@
 import {
   BellRingIcon,
+  StoreIcon,
   CalendarClockIcon,
   ClipboardListIcon,
   WalletIcon,
@@ -25,6 +26,7 @@ const ICONS = {
   schedule: CalendarClockIcon,
   team: UsersIcon,
   settings: SettingsIcon,
+  business: StoreIcon,
 } as const;
 
 export function NavIcon({ name, ...props }: LucideProps & { name: NavIconName }) {

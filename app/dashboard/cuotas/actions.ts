@@ -1,10 +1,14 @@
 "use server";
 
 import { refresh } from "next/cache";
+import { redirect } from "next/navigation";
+
+import { db } from "@/db";
 
 import { authorizeAction, FORBIDDEN, parseId, type ActionState } from "@/lib/actions";
 import { recordAudit } from "@/lib/audit";
-import { deletePayment, PaymentError, recordPayment, voidCharge } from "@/lib/data/charges";
+import { createOneOffCharge, deletePayment, PaymentError, recordPayment, voidCharge } from "@/lib/data/charges";
+import { createClient } from "@/lib/data/clients";
 import {
   AlreadyEnrolledError,
   cancelEnrollment,
@@ -15,9 +19,18 @@ import {
 import { InvalidReferenceError } from "@/lib/data/scope";
 import { cancelProviderSubscriptions, startProviderSubscription } from "@/lib/payments/subscriptions";
 import { todayInZone } from "@/lib/datetime";
-import { parseForm } from "@/lib/forms";
+import { isUniqueViolation } from "@/lib/db-errors";
+import { withFlash } from "@/lib/flash";
+import { parseForm, type FieldErrors } from "@/lib/forms";
 import { formatMoney } from "@/lib/money";
-import { enrollmentSchema, paymentSchema } from "@/lib/validation/memberships";
+import { clientSchema } from "@/lib/validation/clients";
+import {
+  enrollmentSchema,
+  enrollmentTermsSchema,
+  newChargeSchema,
+  oneOffChargeSchema,
+  paymentSchema,
+} from "@/lib/validation/memberships";
 
 const MEMBERSHIPS = { product: "memberships" } as const;
 
@@ -121,4 +134,69 @@ export async function changeEnrollmentAction(enrollmentId: string, action: keyof
   }
   refresh();
   return ok ? ENROLLMENT_ACTIONS[action].message : undefined;
+}
+
+/** Thrown inside the "Nuevo cobro" transaction to roll it back with a field error. */
+class ChargeFlowError extends Error {
+  constructor(public errors: FieldErrors) {
+    super("Charge flow rejected");
+  }
+}
+
+/**
+ * "Nuevo cobro": creates the client (if new) and the enrollment or one-off
+ * charge in one transaction, so a failed step never leaves half of it saved.
+ */
+export async function createChargeAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const ctx = await authorizeAction({ enrollment: ["create"], client: ["create"] }, MEMBERSHIPS);
+  if (!ctx) return FORBIDDEN;
+  const currency = ctx.settings.currency;
+  const base = parseForm(newChargeSchema, formData);
+  const client = base.success && base.data.clientId ? null : parseForm(clientSchema, formData);
+  const what = base.success ? base.data.what : null;
+  const terms = what === "plan" ? parseForm(enrollmentTermsSchema(currency), formData) : null;
+  const oneOff = what === "one_off" ? parseForm(oneOffChargeSchema(currency), formData) : null;
+  const errors = {
+    ...(base.success ? {} : base.errors),
+    ...(client && !client.success ? client.errors : {}),
+    ...(terms && !terms.success ? terms.errors : {}),
+    ...(oneOff && !oneOff.success ? oneOff.errors : {}),
+  };
+  if (Object.keys(errors).length > 0 || !base.success) return { errors };
+
+  const today = todayInZone(ctx.settings.timezone);
+  let clientId: string;
+  let enrollmentId: string | null = null;
+  try {
+    clientId = await db.transaction(async (tx) => {
+      let id = base.data.clientId;
+      if (!id && client?.success) {
+        try {
+          id = (await createClient(ctx, client.data, tx)).id;
+        } catch (error) {
+          if (isUniqueViolation(error, "clients_org_phone_unique")) {
+            throw new ChargeFlowError({ phone: "Ya existe alguien con ese teléfono. Volvé atrás y buscalo por nombre." });
+          }
+          throw error;
+        }
+      }
+      if (terms?.success) {
+        enrollmentId = await enroll(ctx, { ...terms.data, clientId: id }, today, tx);
+      } else if (oneOff?.success) {
+        await createOneOffCharge(ctx, { clientId: id, ...oneOff.data }, tx);
+      }
+      return id;
+    });
+  } catch (error) {
+    if (error instanceof ChargeFlowError) return { errors: error.errors };
+    if (error instanceof AlreadyEnrolledError) return { errors: { planId: "Ya está inscripto en este plan." } };
+    if (error instanceof InvalidReferenceError) return { errors: { form: "El plan o la persona ya no están disponibles. Recargá la página." } };
+    throw error;
+  }
+  // Automatic billing when the business connected an online provider (none yet).
+  if (enrollmentId) await startProviderSubscription(ctx, enrollmentId);
+  if (what === "one_off" && oneOff?.success) {
+    await recordAudit(ctx, "charge.created", { type: "client", id: clientId }, { concept: oneOff.data.concept, amount: oneOff.data.amount });
+  }
+  redirect(withFlash(`/dashboard/clients/${clientId}`, what === "plan" ? "inscripcion-creada" : "cobro-creado"));
 }

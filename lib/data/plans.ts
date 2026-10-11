@@ -23,6 +23,7 @@ export async function listPlans(ctx: TenantScope, { includeArchived = false } = 
       currency: plans.currency,
       intervalUnit: plans.intervalUnit,
       intervalCount: plans.intervalCount,
+      billingTiming: plans.billingTiming,
       archivedAt: plans.archivedAt,
       activeMembers: sql<number>`(
         select count(*)::int from ${enrollments}

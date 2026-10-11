@@ -14,6 +14,8 @@ import { EmptyState } from "@/components/ui-kit/empty-state";
 import { EntityAvatar } from "@/components/ui-kit/entity-avatar";
 import { HelpHint } from "@/components/ui-kit/help-hint";
 import { getSetupStatus } from "@/lib/data/setup";
+import { ScheduleWizard } from "@/components/staff/schedule-wizard";
+import { WeekPreview } from "@/components/illustrations/previews";
 import { PageHeader } from "@/components/ui-kit/page-header";
 import { SectionCard } from "@/components/ui-kit/section-card";
 import { requireProduct } from "@/lib/actions";
@@ -24,6 +26,7 @@ import { getStaffForMember, listStaff } from "@/lib/data/staff";
 import { todayInZone } from "@/lib/datetime";
 import { can, getTenantContextOrRedirect } from "@/lib/tenant";
 import { timeZoneLabel } from "@/lib/timezones";
+import { describeSchedule, fromRules } from "@/lib/schedule-wizard";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Horarios" };
@@ -69,7 +72,7 @@ async function Schedule({ searchParams }: { searchParams: PageProps<"/dashboard/
   if (!person) {
     return (
       <>
-        <PageHeader title="Horarios" />
+        <PageHeader back={{ href: "/dashboard/negocio", label: "Mi negocio" }} title="Horarios" />
         <EmptyState
           icon={CalendarClockIcon}
           title="No hay nadie para tomar turnos"
@@ -92,6 +95,7 @@ async function Schedule({ searchParams }: { searchParams: PageProps<"/dashboard/
   return (
     <>
       <PageHeader
+        back={{ href: "/dashboard/negocio", label: "Mi negocio" }}
         help={{ section: "schedule", settings: ctx.settings, open: !hasHours }}
         title="Horarios"
         description={
@@ -139,6 +143,9 @@ async function Schedule({ searchParams }: { searchParams: PageProps<"/dashboard/
           title={isTeam ? `Horario de ${person.name}` : "Tu horario de atención"}
           disabled={!canEditSchedule}
           ctx={ctx}
+          mode={params.modo === "asistente" ? "wizard" : params.modo === "detalle" ? "detail" : "summary"}
+          personName={isTeam ? person.name : null}
+          baseHref={hrefFor({ tab: "semana" })}
         />
       ) : (
         <DaysOffTab
@@ -189,24 +196,57 @@ async function WeeklyTab({
   staffId,
   title,
   disabled,
+  mode,
+  personName,
+  baseHref,
 }: {
   ctx: Awaited<ReturnType<typeof getTenantContextOrRedirect>>;
   staffId: string;
   title: string;
   disabled: boolean;
+  mode: "summary" | "wizard" | "detail";
+  personName: string | null;
+  baseHref: string;
 }) {
   const rules = await getWeeklySchedule(ctx, staffId);
+  const { values, representable } = fromRules(rules);
+  const withMode = (modo: string) => `${baseHref}${baseHref.includes("?") ? "&" : "?"}modo=${modo}`;
+
+  // No hours yet (or asked to change them): the step-by-step assistant.
+  if (!disabled && (mode === "wizard" || (rules.length === 0 && mode !== "detail"))) {
+    return <ScheduleWizard key={staffId} staffId={staffId} initial={values} personName={personName} doneHref={baseHref} />;
+  }
+  if (!disabled && mode === "detail") {
+    return (
+      <SectionCard title={title} description="Editá cada día por separado. Si cortás al mediodía, agregá dos franjas.">
+        <WeeklyScheduleEditor key={staffId} action={saveWeeklyScheduleAction.bind(null, staffId)} rules={rules} disabled={disabled} />
+      </SectionCard>
+    );
+  }
+
+  const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({
+    weekday,
+    ranges: rules.filter((rule) => rule.weekday === weekday).map((rule) => ({ start: rule.startTime, end: rule.endTime })),
+  }));
   return (
-    <SectionCard
-      title={title}
-      description="Prendé los días que atendés y elegí los horarios. Si cortás al mediodía, agregá dos franjas."
-    >
-      <WeeklyScheduleEditor
-        key={staffId}
-        action={saveWeeklyScheduleAction.bind(null, staffId)}
-        rules={rules}
-        disabled={disabled}
-      />
+    <SectionCard title={title}>
+      <p className="rounded-2xl bg-primary-soft/60 p-4 text-[15px] font-semibold">{rules.length === 0 ? "Todavía no hay horario." : describeSchedule(days)}</p>
+      <WeekPreview days={days} caption="Solo se ofrecen turnos dentro de estas barras." />
+      {!disabled && (
+        <div className="flex flex-wrap gap-2">
+          {representable && (
+            <Link href={withMode("asistente")} className={buttonVariants()}>
+              Cambiar horario
+            </Link>
+          )}
+          <Link href={withMode("detalle")} className={buttonVariants({ variant: representable ? "ghost" : "default" })}>
+            Editar día por día
+          </Link>
+        </div>
+      )}
+      {!representable && (
+        <p className="text-sm text-muted-foreground">Tu horario tiene detalles especiales, así que se edita día por día.</p>
+      )}
     </SectionCard>
   );
 }

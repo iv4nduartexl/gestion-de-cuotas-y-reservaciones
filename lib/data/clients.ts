@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, asc, count, eq, ilike, isNotNull, isNull, or, type SQL } from "drizzle-orm";
 
-import { db } from "@/db";
+import { db, type Executor } from "@/db";
 import { clients, enrollments } from "@/db/schema";
 import { pauseEnrollment } from "@/lib/data/enrollments";
 import type { ClientInput } from "@/lib/validation/clients";
@@ -52,8 +52,8 @@ export async function getClient(ctx: TenantScope, id: string): Promise<Client | 
   return row ?? null;
 }
 
-export async function createClient(ctx: TenantScope, input: ClientInput) {
-  const [row] = await db
+export async function createClient(ctx: TenantScope, input: ClientInput, exec: Executor = db) {
+  const [row] = await exec
     .insert(clients)
     .values({ ...input, organizationId: ctx.organization.id })
     .returning();

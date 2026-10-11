@@ -4,7 +4,7 @@ import { PlusIcon, WandSparklesIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { FormMessage } from "@/components/forms/form-message";
-import { TimeSelect } from "@/components/forms/py-inputs";
+import { TimePicker } from "@/components/forms/time-picker";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useFormAction } from "@/hooks/use-form-action";
@@ -123,7 +123,7 @@ export function WeeklyScheduleEditor({
                 <div className="flex flex-col gap-2">
                   {ranges.map((range, index) => (
                     <div key={index} className="flex flex-wrap items-center gap-2">
-                      <TimeSelect
+                      <TimePicker
                         aria-label={`${label}: desde`}
                         value={range.start}
                         onChange={(start) =>
@@ -131,7 +131,7 @@ export function WeeklyScheduleEditor({
                         }
                       />
                       <span className="text-sm text-muted-foreground">a</span>
-                      <TimeSelect
+                      <TimePicker
                         aria-label={`${label}: hasta`}
                         value={range.end}
                         onChange={(end) => update(weekday, ranges.map((r, i) => (i === index ? { ...r, end } : r)))}

@@ -46,6 +46,7 @@ export default defineConfig({
       CRON_SECRET: process.env.CRON_SECRET!,
       PAYMENT_PROVIDERS: process.env.PAYMENT_PROVIDERS!,
       FAKE_PROVIDER_SECRET: process.env.FAKE_PROVIDER_SECRET!,
+      ADMIN_EMAILS: "admin@e2e.test",
     },
   },
 });

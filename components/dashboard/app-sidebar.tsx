@@ -15,11 +15,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { roleLabels } from "@/lib/auth/permissions";
 import { BUSINESS_TYPE_INFO } from "@/lib/business-types";
 import { getNavigation } from "@/lib/data/navigation";
-import { getTenantContextOrRedirect, listUserOrganizations } from "@/lib/tenant";
+import { isAdmin } from "@/lib/admin";
+import { getSession, getTenantContextOrRedirect, listUserOrganizations } from "@/lib/tenant";
 
 export async function AppSidebar() {
   const ctx = await getTenantContextOrRedirect();
-  const [organizations, navigation] = await Promise.all([listUserOrganizations(ctx.user.id), getNavigation(ctx)]);
+  const [organizations, navigation, session] = await Promise.all([listUserOrganizations(ctx.user.id), getNavigation(ctx), getSession()]);
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -38,7 +39,7 @@ export async function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="gap-2 px-3 pb-4">
         <div className="border-t border-sidebar-border pt-2">
-          <NavUser user={ctx.user} roleLabel={roleLabels[ctx.role]} />
+          <NavUser user={ctx.user} roleLabel={roleLabels[ctx.role]} showAdmin={isAdmin(session)} />
         </div>
       </SidebarFooter>
       <SidebarRail />

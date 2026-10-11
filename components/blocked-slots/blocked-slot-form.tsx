@@ -6,7 +6,8 @@ import { createBlockedSlotAction } from "@/app/dashboard/schedule/actions";
 import { Field } from "@/components/forms/field";
 import { FormField } from "@/components/forms/form-field";
 import { FormMessage } from "@/components/forms/form-message";
-import { DatePicker, TimeSelect } from "@/components/forms/py-inputs";
+import { DatePicker } from "@/components/forms/py-inputs";
+import { TimePicker } from "@/components/forms/time-picker";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -81,10 +82,10 @@ export function BlockedSlotForm({
       {!allDay && (
         <div className="flex flex-wrap items-end gap-4">
           <Field id="startTime" label="Hora de inicio" error={errors.startTime}>
-            <TimeSelect id="startTime" name="startTime" value={startTime} onChange={setStartTime} />
+            <TimePicker id="startTime" name="startTime" aria-label="Hora de inicio" value={startTime} onChange={setStartTime} />
           </Field>
           <Field id="endTime" label="Hora de fin" error={errors.endTime}>
-            <TimeSelect id="endTime" name="endTime" value={endTime} onChange={setEndTime} />
+            <TimePicker id="endTime" name="endTime" aria-label="Hora de fin" value={endTime} onChange={setEndTime} />
           </Field>
         </div>
       )}

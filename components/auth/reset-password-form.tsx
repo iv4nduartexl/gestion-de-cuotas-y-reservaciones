@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { FormField } from "@/components/forms/form-field";
 import { FormMessage } from "@/components/forms/form-message";
@@ -19,6 +19,10 @@ export function ResetPasswordForm() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [done, setDone] = useState(false);
   const [pending, setPending] = useState(false);
+  // After a successful submit we navigate away, but the page stays alive in
+  // the background (<Activity>). Reset when it's hidden, so coming back (e.g.
+  // after signing out) shows a usable form instead of a stuck button.
+  useEffect(() => () => setPending(false), []);
 
   if (linkError || !token) {
     return (

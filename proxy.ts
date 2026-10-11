@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { isAdminIdentity } from "@/lib/admin-access";
 import { auth } from "@/lib/auth";
 
 // Runs on the Node.js runtime (Next 16 default for proxy), before rendering.
@@ -20,12 +21,14 @@ export async function proxy(request: NextRequest) {
   }
 
   if (pathname.startsWith("/dashboard") && !session.session.activeOrganizationId) {
-    return NextResponse.redirect(new URL("/onboarding", request.url));
+    // The developer admin doesn't need a business of their own.
+    const home = isAdminIdentity(session.user, session.session) ? "/admin" : "/onboarding";
+    return NextResponse.redirect(new URL(home, request.url));
   }
 
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/onboarding/:path*"],
+  matcher: ["/dashboard/:path*", "/onboarding/:path*", "/admin/:path*"],
 };

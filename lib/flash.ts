@@ -5,7 +5,10 @@ export const FLASH_MESSAGES = {
   "servicio-creado": "Servicio creado",
   "persona-creada": "Persona agregada al equipo",
   "turno-creado": "Turno agendado",
+  "alquiler-creado": "Alquiler agendado",
   "plan-creado": "Plan creado",
+  "inscripcion-creada": "Inscripción creada",
+  "cobro-creado": "Cobro creado",
 } as const;
 
 export type FlashKey = keyof typeof FLASH_MESSAGES;

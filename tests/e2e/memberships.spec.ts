@@ -1,13 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { sidebar, USERS } from "./helpers";
+import { USERS, sidebar, wizardNext } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 test.use({ storageState: USERS.e.storageState });
 
 /** Picks day 10 of the month `monthsBack` months ago in the open Spanish calendar. */
 async function pickDay10(page: Page, label: string, monthsBack: number) {
-  await page.getByLabel(label).click();
+  await page.getByLabel(label, { exact: true }).click();
   for (let i = 0; i < monthsBack; i++) await page.getByRole("button", { name: "Ir al mes anterior" }).click();
   await page.getByRole("button", { name: /(^|, )10 de / }).click();
 }
@@ -19,11 +19,16 @@ test("a gym starts by creating a plan", async ({ page }) => {
   await expect(page.getByText("Primero creá un plan")).toBeVisible();
   await page.getByRole("link", { name: "Crear mi primer plan" }).click();
 
+  // Step by step: name, price, how often, when it's paid, review.
   await page.getByLabel("Nombre", { exact: true }).fill("Musculación");
-  const price = page.getByLabel("Precio");
+  await wizardNext(page);
+  const price = page.getByLabel("Precio de cada cuota");
   await price.pressSequentially("150000");
   await expect(price).toHaveValue("150.000");
-  await expect(page.getByLabel("Frecuencia")).toHaveValue("month-1");
+  await wizardNext(page);
+  await expect(page.getByRole("radio", { name: "Cada mes" })).toHaveAttribute("aria-checked", "true");
+  await wizardNext(page);
+  await wizardNext(page);
   await page.getByRole("button", { name: "Crear plan" }).click();
 
   await expect(page).toHaveURL(/\/dashboard\/planes$/);
@@ -40,9 +45,15 @@ test("enrolling a socio two months back generates overdue cuotas", async ({ page
   await page.getByRole("button", { name: "Guardar socio" }).click();
   await expect(page.getByRole("heading", { name: "Socio Uno" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Inscribir en un plan" }).click();
+  // The step-by-step assistant: plan → since when → first cuota → review.
+  await page.getByRole("link", { name: "Inscribir en un plan" }).click();
+  await expect(page.getByRole("heading", { name: "¿En qué plan anotás a Socio?" })).toBeVisible();
+  await wizardNext(page);
   await pickDay10(page, "Desde", 2);
   await expect(page.getByText("se van a generar las cuotas de los períodos que ya pasaron")).toBeVisible();
+  await wizardNext(page);
+  await wizardNext(page);
+  await expect(page.getByText(/1ª cuota:/)).toBeVisible();
   await page.getByRole("button", { name: "Inscribir", exact: true }).click();
   await expect(page.getByText("Inscripción creada")).toBeVisible();
 
@@ -94,6 +105,40 @@ test("partial then full payment, with live summary and WhatsApp reminder", async
   chargeUrl = page.url();
 });
 
+test("Nuevo cobro: a new client and a one-off charge, then it's paid", async ({ page }) => {
+  await page.goto("/dashboard/cuotas");
+  await page.getByRole("link", { name: "Nuevo cobro" }).click();
+  await expect(page.getByRole("heading", { name: "¿A quién le cobrás?" })).toBeVisible();
+  // Nobody chosen yet: can't continue.
+  await expect(page.getByRole("button", { name: "Siguiente" })).toBeDisabled();
+  await page.getByRole("radio", { name: /Es alguien nuevo/ }).click();
+  await wizardNext(page);
+  await page.getByLabel("Nombre y apellido").fill("Cobro Nuevo");
+  await page.getByLabel("Teléfono / WhatsApp").fill("0981 500 077");
+  await wizardNext(page);
+  await wizardNext(page); // e-mail and C.I. are optional
+  await page.getByRole("radio", { name: /Un cobro único/ }).click();
+  await wizardNext(page);
+  await page.getByRole("radio", { name: "Matrícula" }).click();
+  await wizardNext(page);
+  await page.getByLabel("Monto").pressSequentially("80000");
+  await wizardNext(page);
+  await page.getByRole("radio", { name: "En 7 días" }).click();
+  await wizardNext(page);
+  await expect(page.getByText(/Matrícula · Gs\.\s80\.000/)).toBeVisible();
+  await page.getByRole("button", { name: "Crear cobro" }).click();
+  await expect(page.getByText("Cobro creado")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Cobro Nuevo" })).toBeVisible();
+
+  await page.goto("/dashboard/cuotas?filtro=por-cobrar");
+  const row = page.getByRole("listitem").filter({ hasText: "Cobro Nuevo" }).first();
+  await expect(row).toContainText("Matrícula");
+  await row.getByRole("button", { name: "Registrar pago" }).click();
+  await expect(page.getByRole("dialog").getByLabel("Monto recibido")).toHaveValue("80.000");
+  await page.getByRole("dialog").getByRole("button", { name: "Guardar pago" }).click();
+  await expect(page.getByText("Pago registrado: cuota al día")).toBeVisible();
+});
+
 test("pause and cancel a membership", async ({ page }) => {
   await page.goto("/dashboard/clients");
   await page.getByRole("link", { name: "Socio Uno" }).first().click();
@@ -119,7 +164,9 @@ test("another business can't open the cuota", async ({ browser }) => {
 test("gym navigation: Cuotas and Planes, also on phones", async ({ page, browser }) => {
   await page.goto("/dashboard");
   await expect(sidebar(page).getByRole("link", { name: "Cuotas" })).toBeVisible();
-  await expect(sidebar(page).getByRole("link", { name: "Planes" })).toBeVisible();
+  // Planes lives in "Mi negocio", not in the sidebar.
+  await expect(sidebar(page).getByRole("link", { name: "Planes" })).toHaveCount(0);
+  await expect(sidebar(page).getByRole("link", { name: "Mi negocio" })).toBeVisible();
   await expect(sidebar(page).getByRole("link", { name: "Agenda", exact: true })).toHaveCount(0);
 
   const phone = await browser.newContext({ storageState: USERS.e.storageState, viewport: { width: 390, height: 844 }, hasTouch: true });

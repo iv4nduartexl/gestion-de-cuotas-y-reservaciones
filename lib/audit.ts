@@ -4,7 +4,7 @@ import { desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { auditEvents } from "@/db/schema";
-import type { AuditAction } from "@/lib/audit-constants";
+import { ADMIN_ACTOR_NAME, type AuditAction } from "@/lib/audit-constants";
 import type { TenantScope } from "@/lib/data/scope";
 import type { TenantContext } from "@/lib/tenant";
 
@@ -13,7 +13,7 @@ import type { TenantContext } from "@/lib/tenant";
  * logged but must not undo or block what the user just did.
  */
 export async function recordAudit(
-  ctx: Pick<TenantContext, "organization" | "user">,
+  ctx: Pick<TenantContext, "organization" | "user"> & { impersonation?: TenantContext["impersonation"] },
   action: AuditAction,
   target?: { type: string; id: string } | null,
   details?: Record<string, unknown>,
@@ -21,12 +21,13 @@ export async function recordAudit(
   try {
     await db.insert(auditEvents).values({
       organizationId: ctx.organization.id,
-      actorUserId: ctx.user.id,
-      actorName: ctx.user.name,
+      // While impersonating, the developer admin did it, not the owner.
+      actorUserId: ctx.impersonation ? ctx.impersonation.adminId : ctx.user.id,
+      actorName: ctx.impersonation ? ADMIN_ACTOR_NAME : ctx.user.name,
       action,
       targetType: target?.type ?? null,
       targetId: target?.id ?? null,
-      details: details ?? null,
+      details: ctx.impersonation ? { ...details, impersonating: ctx.user.id } : (details ?? null),
     });
   } catch (error) {
     console.error("Failed to record audit event", action, error);

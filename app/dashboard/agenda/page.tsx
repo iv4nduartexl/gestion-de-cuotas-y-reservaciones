@@ -1,4 +1,4 @@
-import { CalendarPlusIcon, CalendarXIcon, HourglassIcon, PlusIcon } from "lucide-react";
+import { BedDoubleIcon, CalendarPlusIcon, CalendarXIcon, HourglassIcon, PlusIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
@@ -7,6 +7,7 @@ import { AgendaDayNav } from "@/components/agenda/day-nav";
 import { AppointmentList } from "@/components/agenda/appointment-list";
 import { DayGrid } from "@/components/agenda/day-grid";
 import { ListSkeleton } from "@/components/dashboard/list-skeleton";
+import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui-kit/empty-state";
 import { EntityAvatar } from "@/components/ui-kit/entity-avatar";
@@ -17,6 +18,7 @@ import { countPendingAppointments, listAppointmentsBetween } from "@/lib/data/ap
 import { loadStaffAvailability } from "@/lib/data/availability";
 import { listStaff } from "@/lib/data/staff";
 import { addDaysToDate, DATE_PATTERN, formatInZone, timeToMinutes, todayInZone, zonedToUtc } from "@/lib/datetime";
+import { stayUnits } from "@/lib/stays";
 import { can, getTenantContextOrRedirect } from "@/lib/tenant";
 import { cn } from "@/lib/utils";
 
@@ -44,11 +46,15 @@ async function Agenda({ searchParams }: { searchParams: PageProps<"/dashboard/ag
 
   const dayStart = zonedToUtc(date, "00:00", tz);
   const dayEnd = zonedToUtc(addDaysToDate(date, 1), "00:00", tz);
-  const [turnos, pending, availability] = await Promise.all([
+  const [dayBookings, pending, availability] = await Promise.all([
     listAppointmentsBetween(ctx, { from: dayStart, to: dayEnd, staffId: persona?.id }),
     countPendingAppointments(ctx),
     loadStaffAvailability(ctx, { staffIds: people.map((p) => p.id), from: dayStart, to: dayEnd }),
   ]);
+
+  // Rentals ("Por días") span days and have no staff: shown in their own band.
+  const stays = dayBookings.filter((booking) => booking.kind === "stay");
+  const turnos = dayBookings.filter((booking) => booking.kind !== "stay");
 
   const hrefFor = (next: { fecha?: string; persona?: string | null }) => {
     const search = new URLSearchParams();
@@ -130,7 +136,9 @@ async function Agenda({ searchParams }: { searchParams: PageProps<"/dashboard/ag
         </nav>
       )}
 
-      {turnos.length === 0 ? (
+      {stays.length > 0 && <StaysBand stays={stays} date={date} timeZone={tz} />}
+
+      {turnos.length === 0 && stays.length > 0 ? null : turnos.length === 0 ? (
         <EmptyState
           icon={people.some((p) => hoursFor(p.id).length > 0) ? CalendarPlusIcon : CalendarXIcon}
           title="No hay turnos este día"
@@ -197,5 +205,58 @@ function PersonChip({
       {name && <EntityAvatar name={name} size="sm" />}
       {children}
     </Link>
+  );
+}
+
+/** Rentals that touch this day: who is staying and which night it is. */
+function StaysBand({
+  stays,
+  date,
+  timeZone,
+}: {
+  stays: { id: string; serviceName: string; clientName: string; startsAt: Date; endsAt: Date; status: string }[];
+  date: string;
+  timeZone: string;
+}) {
+  return (
+    <section className="flex flex-col gap-2" aria-labelledby="stays-title">
+      <h2 id="stays-title" className="flex items-center gap-2 text-sm font-bold tracking-wide text-muted-foreground uppercase">
+        <BedDoubleIcon className="size-4" aria-hidden="true" /> Alquileres y estadías
+      </h2>
+      <ul className="flex flex-col gap-2">
+        {stays.map((stay) => {
+          const checkIn = formatInZone(stay.startsAt, timeZone, "yyyy-MM-dd");
+          const checkOut = formatInZone(stay.endsAt, timeZone, "yyyy-MM-dd");
+          const nights = Math.max(1, stayUnits("night", checkIn, checkOut));
+          const night = stayUnits("night", checkIn, date) + 1;
+          const moment =
+            date === checkIn
+              ? `Entra hoy ${formatInZone(stay.startsAt, timeZone, "HH:mm")}`
+              : date === checkOut
+                ? `Sale hoy ${formatInZone(stay.endsAt, timeZone, "HH:mm")}`
+                : `Noche ${night} de ${nights}`;
+          return (
+            <li key={stay.id}>
+              <Link
+                href={`/dashboard/agenda/${stay.id}`}
+                className={cn(
+                  "flex flex-wrap items-center gap-3 rounded-2xl border-l-4 border-primary bg-card p-4 shadow-soft hover:bg-primary-soft/30",
+                  stay.status === "pending" && "border-dashed",
+                  stay.status === "cancelled" && "opacity-50",
+                )}
+              >
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate font-bold">{stay.serviceName}</span>
+                  <span className="truncate text-sm text-muted-foreground">
+                    {stay.clientName} · {formatInZone(stay.startsAt, timeZone, "d/MM")} → {formatInZone(stay.endsAt, timeZone, "d/MM")}
+                  </span>
+                </span>
+                <Badge variant={date === checkIn || date === checkOut ? "warning" : "info"}>{moment}</Badge>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

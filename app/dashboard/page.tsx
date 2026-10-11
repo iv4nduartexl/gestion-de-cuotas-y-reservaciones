@@ -32,6 +32,7 @@ import { exampleServices, planExample } from "@/lib/help-content";
 import { whatsappText } from "@/lib/messaging/templates";
 import { formatMoney } from "@/lib/money";
 import { DEFAULT_APPOINTMENT_TEMPLATE } from "@/lib/reminder-constants";
+import { priceSuffix, serviceSummary } from "@/lib/service-format";
 import { setupSteps, type StepPreview } from "@/lib/setup-steps";
 import { getTenantContextOrRedirect } from "@/lib/tenant";
 
@@ -71,7 +72,10 @@ async function DashboardHome({ searchParams }: { searchParams: PageProps<"/dashb
   // Real services when there are some, otherwise examples for this business type.
   const previewServices =
     services.length > 0
-      ? services.map((service) => ({ name: service.name, meta: `${formatDuration(service.durationMinutes)} · ${formatMoney(service.price, service.currency)}` }))
+      ? services.map((service) => ({
+          name: service.name,
+          meta: `${service.bookingType === "stay" ? serviceSummary(service).split(" · ")[0] : formatDuration(service.durationMinutes ?? 0)} · ${formatMoney(service.price, service.currency)}${priceSuffix(service)}`,
+        }))
       : exampleServices(settings.businessType);
   const plan = planExample(settings.businessType);
   const planName = plan.split(" · ")[0];

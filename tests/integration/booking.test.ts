@@ -33,6 +33,7 @@ async function setupBusiness(label: string, staffNames = ["Ana"]) {
   const service = await createService(tenant, {
     name: "Corte",
     description: null,
+    bookingType: "slot",
     durationMinutes: 30,
     price: 50000,
     staffIds: people.map((p) => p.id),
@@ -136,7 +137,7 @@ describe("booking", () => {
     await expect(online(a.tenant, b.service.id, at("09:30"))).rejects.toBeInstanceOf(BookingReferenceError);
     await expect(online(a.tenant, a.service.id, at("09:30"), "+595981000060", b.people[0].id)).rejects.toBeInstanceOf(BookingReferenceError);
 
-    const archived = await createService(a.tenant, { name: "Viejo", description: null, durationMinutes: 30, price: 1, staffIds: [a.people[0].id] });
+    const archived = await createService(a.tenant, { name: "Viejo", description: null, bookingType: "slot", durationMinutes: 30, price: 1, staffIds: [a.people[0].id] });
     await setServiceArchived(a.tenant, archived.id, true);
     await expect(online(a.tenant, archived.id, at("09:30"))).rejects.toBeInstanceOf(BookingReferenceError);
   });

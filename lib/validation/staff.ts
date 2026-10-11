@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { reportIssues, scheduleIssues, type Issue } from "@/lib/config-rules";
 import { TIME_PATTERN, timeToMinutes } from "@/lib/datetime";
 import { requiredText } from "./common";
 
@@ -51,6 +52,8 @@ export const weeklyScheduleSchema = z.object({
     })
     .pipe(z.array(daySchema).max(7))
     .superRefine((days, ctx) => {
+      // Plain-language rules (at least one day, blocks of 30+ min, no overlaps).
+      reportIssues(ctx, scheduleIssues({ days }) as Issue<unknown>[]);
       const seen = new Set<number>();
       for (const day of days) {
         if (seen.has(day.weekday)) {

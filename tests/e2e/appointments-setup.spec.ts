@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { USERS } from "./helpers";
+import { USERS, expectTime, setTime, timePicker, wizardNext } from "./helpers";
 
 test.use({ storageState: USERS.a.storageState });
 
@@ -9,38 +9,58 @@ test("the owner is on the team after onboarding (team mode)", async ({ page }) =
   await expect(page.getByRole("link", { name: new RegExp(USERS.a.name) })).toBeVisible();
 });
 
-test("weekly schedule: preset, persistence, overlap error", async ({ page }) => {
+test("weekly schedule with the step-by-step assistant, then day by day", async ({ page }) => {
   await page.goto("/dashboard/schedule");
-  await expect(page.getByRole("heading", { name: `Horario de ${USERS.a.name}` })).toBeVisible();
-
-  await page.getByRole("button", { name: "Lun a vie · 08–12 y 14–18" }).click();
-  await expect(page.getByTestId("weekday-5").getByLabel("Viernes: desde")).toHaveCount(2);
-  await expect(page.getByTestId("weekday-6").getByText("No se toman turnos este día.")).toBeVisible();
+  // No hours yet: the assistant starts right away.
+  await expect(page.getByRole("heading", { name: `¿Qué días atiende ${USERS.a.name}?` })).toBeVisible();
+  // Nonsense is blocked, with a fix.
+  await page.getByRole("button", { name: "Lunes a viernes" }).click();
+  await wizardNext(page);
+  await setTime(timePicker(page, "Abro a las"), "18:00");
+  await setTime(timePicker(page, "Cierro a las"), "08:00");
+  await expect(page.getByRole("button", { name: "Siguiente" })).toBeDisabled();
+  await page.getByRole("button", { name: "De 08:00 a 18:00" }).click();
+  await wizardNext(page);
+  await page.getByRole("radio", { name: /Sí, hago un corte/ }).click();
+  await wizardNext(page);
+  await wizardNext(page);
+  await expect(page.getByText("Lunes a viernes de 08:00 a 12:00 y de 14:00 a 18:00")).toBeVisible();
   await page.getByRole("button", { name: "Guardar horario" }).click();
-  await expect(page.getByText("Horario guardado")).toBeVisible();
+  await expect(page.getByText("Horario guardado").first()).toBeVisible();
 
-  // Persisted after reload, in 24 h format.
-  await page.reload();
-  await expect(page.getByTestId("weekday-3").getByLabel("Miércoles: desde").nth(1)).toHaveValue("14:00");
-  await expect(page.getByTestId("weekday-7").getByText("Cerrado")).toBeVisible();
+  // Saved: a plain summary.
+  await expect(page.getByText("Lunes a viernes de 08:00 a 12:00 y de 14:00 a 18:00")).toBeVisible();
 
-  // Overlap: Monday 08:00–12:00 and 11:00–18:00.
+  // Power users can still edit day by day; overlaps are refused.
+  await page.getByRole("link", { name: "Editar día por día" }).click();
+  await expectTime(timePicker(page.getByTestId("weekday-3"), "Miércoles: desde", 1), "14:00");
   const monday = page.getByTestId("weekday-1");
-  await monday.getByLabel("Lunes: desde").nth(1).selectOption("11:00");
+  await setTime(timePicker(monday, "Lunes: desde", 1), "11:00");
   await expect(monday.getByText("Estas franjas se superponen.")).toBeVisible();
   await page.getByRole("button", { name: "Guardar horario" }).click();
-  await expect(page.getByText("Hay franjas horarias que se superponen.")).toBeVisible();
+  await expect(page.getByText(/se pisan|se superponen/).first()).toBeVisible();
 });
 
-test("create a service with live guaraní formatting", async ({ page }) => {
+test("create a service with the assistant and live guaraní formatting", async ({ page }) => {
   await page.goto("/dashboard/services/new");
+  await wizardNext(page);
   await page.getByLabel("Nombre", { exact: true }).fill("Corte clásico");
-  await page.getByLabel("Duración").selectOption("45");
+  await wizardNext(page);
+  // Longer than the 10 h day: blocked, and the fix sets one that fits.
+  await page.getByRole("radio", { name: "12 h" }).click();
+  await expect(page.getByText(/nadie podría reservarlo/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Siguiente" })).toBeDisabled();
+  await page.getByLabel("Horas").fill("0");
+  await page.getByLabel("Minutos").fill("45");
+  await wizardNext(page);
   const price = page.getByLabel("Precio");
   await price.pressSequentially("1250000");
   await expect(price).toHaveValue("1.250.000");
+  await wizardNext(page);
   await expect(page.getByRole("checkbox", { name: USERS.a.name })).toBeChecked();
-  await page.getByRole("button", { name: "Guardar servicio" }).click();
+  await wizardNext(page);
+  await expect(page.getByText("Así lo ven tus clientes:")).toBeVisible();
+  await page.getByRole("button", { name: "Crear servicio" }).click();
 
   await expect(page).toHaveURL(/\/dashboard\/services$/);
   await expect(page.getByText("Servicio creado")).toBeVisible();
@@ -48,6 +68,17 @@ test("create a service with live guaraní formatting", async ({ page }) => {
   await expect(card).toContainText("45 min");
   await expect(card).toContainText("1.250.000");
   await expect(card).toContainText(`1 profesional`);
+
+  // Editing one setting from the summary.
+  await card.click();
+  await page.getByRole("link", { name: "Cambiar precio" }).click();
+  await expect(page.getByRole("heading", { name: "¿Cuánto cuesta?" })).toBeVisible();
+  const newPrice = page.getByLabel("Precio", { exact: true });
+  await newPrice.fill("");
+  await newPrice.pressSequentially("90000");
+  await page.getByRole("button", { name: "Guardar cambio" }).click();
+  await expect(page.getByText("Cambios guardados")).toBeVisible();
+  await expect(page.getByText("Gs. 90.000").first()).toBeVisible();
 });
 
 test("days off: business-wide block with the calendar, and national holidays", async ({ page }) => {

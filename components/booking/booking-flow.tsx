@@ -2,6 +2,7 @@
 
 import {
   ArrowLeftIcon,
+  BedDoubleIcon,
   CalendarDaysIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -16,10 +17,13 @@ import { useState, useTransition, type FormEvent } from "react";
 
 import {
   createBookingAction,
+  createStayBookingAction,
   getAvailabilityAction,
+  getStayCalendarAction,
   type BookingState,
   type PublicDay,
 } from "@/app/[slug]/actions";
+import { StayPicker, type StayOption, type StayRange } from "@/components/booking/stay-picker";
 import { Field } from "@/components/forms/field";
 import { FormField } from "@/components/forms/form-field";
 import { FormMessage } from "@/components/forms/form-message";
@@ -27,8 +31,11 @@ import { PhoneInput } from "@/components/forms/py-inputs";
 import { TextareaField } from "@/components/forms/textarea-field";
 import { Button } from "@/components/ui/button";
 import { EntityAvatar } from "@/components/ui-kit/entity-avatar";
+import { HorizontalScroller } from "@/components/ui-kit/horizontal-scroller";
 import { addDaysToDate, formatCalendarDate, formatDuration } from "@/lib/datetime";
 import { formatMoney } from "@/lib/money";
+import { STAY_UNIT_WORDS, stayAmount } from "@/lib/service-constants";
+import { quoteStay } from "@/lib/stays";
 import { cn } from "@/lib/utils";
 
 type Service = {
@@ -41,25 +48,32 @@ type Service = {
   staffIds: string[];
 };
 
-type Step = "service" | "staff" | "time" | "details";
+type Step = "service" | "staff" | "time" | "stay" | "details";
 
 export function BookingFlow({
   slug,
   services,
+  stays,
   staff,
   showStaffStep,
   today,
+  timeZone,
   autoConfirm,
 }: {
   slug: string;
   services: Service[];
+  /** Rentals ("Por días"): booked with a date range instead of a time. */
+  stays: StayOption[];
+  timeZone: string;
   staff: { id: string; name: string }[];
   showStaffStep: boolean;
   today: string;
   autoConfirm: boolean;
 }) {
   const [step, setStep] = useState<Step>("service");
-  const [serviceId, setServiceId] = useState<string | null>(services.length === 1 ? services[0].id : null);
+  const [serviceId, setServiceId] = useState<string | null>(services.length === 1 && stays.length === 0 ? services[0].id : null);
+  const [stayId, setStayId] = useState<string | null>(null);
+  const [stayRange, setStayRange] = useState<StayRange | null>(null);
   const [staffChoice, setStaffChoice] = useState<string>("any");
   const [fromDate, setFromDate] = useState(today);
   const [days, setDays] = useState<PublicDay[] | null>(null);
@@ -72,7 +86,9 @@ export function BookingFlow({
   const [pending, startSubmit] = useTransition();
   const errors = state.errors ?? {};
 
-  const service = services.find((s) => s.id === serviceId) ?? null;
+  const stay = stays.find((s) => s.id === stayId) ?? null;
+  const service = stay ? null : (services.find((s) => s.id === serviceId) ?? null);
+  const stayQuote = stay && stayRange ? quoteStay(stay, stayRange.checkIn, stayRange.checkOut, timeZone) : null;
   const serviceStaff = service ? staff.filter((p) => service.staffIds.includes(p.id)) : [];
   const needsStaffStep = showStaffStep && serviceStaff.length > 1;
   const selectedDay = days?.find((d) => d.date === date) ?? null;
@@ -92,7 +108,16 @@ export function BookingFlow({
     });
   }
 
+  function chooseStay(id: string) {
+    setStayId(id);
+    setServiceId(null);
+    setStayRange(null);
+    setState({});
+    setStep("stay");
+  }
+
   function chooseService(id: string) {
+    setStayId(null);
     setServiceId(id);
     setStaffChoice("any");
     setDays(null);
@@ -120,7 +145,8 @@ export function BookingFlow({
   }
 
   function goBack() {
-    if (step === "details") setStep("time");
+    if (step === "details") setStep(stay ? "stay" : "time");
+    else if (step === "stay") setStep("service");
     else if (step === "time") setStep(needsStaffStep ? "staff" : "service");
     else if (step === "staff") setStep("service");
   }
@@ -130,9 +156,13 @@ export function BookingFlow({
     const formData = new FormData(event.currentTarget);
     startSubmit(async () => {
       // On success the action redirects to the confirmation page.
-      const result = await createBookingAction(slug, {}, formData);
+      const result = stay ? await createStayBookingAction(slug, {}, formData) : await createBookingAction(slug, {}, formData);
       setState(result);
-      if (result?.slotTaken && serviceId) {
+      if (result?.slotTaken && stay) {
+        // Someone else booked those dates: choose again.
+        setStayRange(null);
+        setStep("stay");
+      } else if (result?.slotTaken && serviceId) {
         // Someone else took the slot: refresh the times and choose again.
         setStep("time");
         loadDays({ serviceId, staffChoice, fromDate }, true);
@@ -183,7 +213,47 @@ export function BookingFlow({
                 </button>
               </li>
             ))}
+            {stays.map((s) => (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  onClick={() => chooseStay(s.id)}
+                  className={cn(
+                    "flex w-full cursor-pointer items-center gap-4 rounded-2xl border-2 bg-card p-4 text-left transition-all hover:border-primary/40 hover:shadow-soft",
+                    s.id === stayId ? "border-primary" : "border-border",
+                  )}
+                >
+                  <span className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="font-bold">{s.name}</span>
+                    {s.description && <span className="text-sm text-muted-foreground">{s.description}</span>}
+                    <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                      <BedDoubleIcon className="size-3.5" aria-hidden="true" /> Por {STAY_UNIT_WORDS[s.stayUnit][0]} · entrada {s.checkInTime}
+                    </span>
+                  </span>
+                  <span className="flex flex-col items-end">
+                    <span className="text-lg font-extrabold text-primary tabular">{formatMoney(s.price, s.currency)}</span>
+                    <span className="text-xs text-muted-foreground">por {STAY_UNIT_WORDS[s.stayUnit][0]}</span>
+                  </span>
+                  <ChevronRightIcon className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                </button>
+              </li>
+            ))}
           </ul>
+        </section>
+      )}
+
+      {step === "stay" && stay && (
+        <section className="flex flex-col gap-4">
+          <StepTitle number={2} title="Elegí las fechas" />
+          {errors.checkIn && <FormMessage type="error">{errors.checkIn}</FormMessage>}
+          <StayPicker
+            key={stay.id}
+            service={stay}
+            timeZone={timeZone}
+            value={stayRange}
+            onChange={setStayRange}
+            loadCalendar={(fromDate) => getStayCalendarAction(slug, { serviceId: stay.id, fromDate })}
+          />
         </section>
       )}
 
@@ -225,7 +295,7 @@ export function BookingFlow({
             </div>
           ) : (
             <>
-              <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1" role="listbox" aria-label="Días">
+              <HorizontalScroller label="Días" className="flex gap-2 pb-1" role="listbox" aria-label="Días">
                 {days.map((day) => {
                   const available = day.slots.length > 0;
                   const active = day.date === date;
@@ -262,7 +332,7 @@ export function BookingFlow({
                     Más días
                   </button>
                 )}
-              </div>
+              </HorizontalScroller>
               {fromDate !== today && (
                 <button
                   type="button"
@@ -313,16 +383,26 @@ export function BookingFlow({
         </section>
       )}
 
-      {step === "details" && service && selectedSlot && (
+      {step === "details" && ((service && selectedSlot) || (stay && stayRange)) && (
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
-          <StepTitle number={needsStaffStep ? 4 : 3} title="Tus datos" />
+          <StepTitle number={stay ? 3 : needsStaffStep ? 4 : 3} title="Tus datos" />
           <p className="-mt-2 text-sm text-muted-foreground">
-            Los usamos solo para tu turno. No hace falta crear una cuenta.
+            Los usamos solo para tu reserva. No hace falta crear una cuenta.
           </p>
           {errors.form && <FormMessage type="error">{errors.form}</FormMessage>}
-          <input type="hidden" name="serviceId" value={service.id} />
-          <input type="hidden" name="staffChoice" value={staffChoice} />
-          <input type="hidden" name="start" value={selectedSlot.start} />
+          {stay && stayRange ? (
+            <>
+              <input type="hidden" name="serviceId" value={stay.id} />
+              <input type="hidden" name="checkIn" value={stayRange.checkIn} />
+              <input type="hidden" name="checkOut" value={stayRange.checkOut} />
+            </>
+          ) : (
+            <>
+              <input type="hidden" name="serviceId" value={service!.id} />
+              <input type="hidden" name="staffChoice" value={staffChoice} />
+              <input type="hidden" name="start" value={selectedSlot!.start} />
+            </>
+          )}
           {/* Honeypot: hidden from people, tempting for bots. */}
           <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
             <label>
@@ -336,14 +416,39 @@ export function BookingFlow({
           </Field>
           <TextareaField name="notes" label="Comentario" optional rows={2} placeholder="Algo que el negocio deba saber" error={errors.notes} />
           <Button type="submit" size="lg" disabled={pending} className="w-full">
-            {pending ? "Reservando…" : autoConfirm ? "Confirmar turno" : "Solicitar turno"}
+            {pending ? "Reservando…" : autoConfirm ? (stay ? "Confirmar reserva" : "Confirmar turno") : stay ? "Solicitar reserva" : "Solicitar turno"}
           </Button>
           {!autoConfirm && (
             <p className="text-center text-xs text-muted-foreground">
-              El negocio confirma cada turno. Te va a quedar como “pendiente” hasta entonces.
+              El negocio confirma cada reserva. Te va a quedar como “pendiente” hasta entonces.
             </p>
           )}
         </form>
+      )}
+
+      {stay && step !== "service" && (
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-card/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
+          <div className="mx-auto flex max-w-xl items-center gap-3">
+            <div className="flex min-w-0 flex-1 flex-col text-sm leading-tight">
+              <span className="truncate font-bold">{stay.name}</span>
+              <span className="truncate text-muted-foreground">
+                {stayRange && stayQuote?.ok
+                  ? `${formatCalendarDate(stayRange.checkIn, "d/MM")} → ${formatCalendarDate(stayRange.checkOut, "d/MM")} · ${stayAmount(stay.stayUnit, stayQuote.quote.units)}`
+                  : "Elegí entrada y salida"}
+              </span>
+            </div>
+            {step === "stay" && (
+              <Button type="button" disabled={!stayQuote?.ok} onClick={() => setStep("details")}>
+                Continuar
+              </Button>
+            )}
+            {step === "details" && stayQuote?.ok && (
+              <span className="flex items-center gap-1 text-sm font-bold text-primary tabular">
+                <CheckIcon className="size-4" aria-hidden="true" /> {formatMoney(stayQuote.quote.total, stay.currency)}
+              </span>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Summary + next step, always at hand on phones. */}

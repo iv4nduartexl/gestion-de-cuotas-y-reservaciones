@@ -9,15 +9,25 @@ import { appointments, clients, services, serviceStaff, staff } from "@/db/schem
 import type { AppointmentStatus } from "@/lib/appointment-status";
 import { computeSlots, pickStaff, type SlotOptions } from "@/lib/availability";
 import { loadStaffAvailability } from "@/lib/data/availability";
+import { getStayService, loadOccupiedDates } from "@/lib/data/stays";
 import { countTurnosByStaff } from "@/lib/data/appointments";
 import type { TenantScope } from "@/lib/data/scope";
 import { addDaysToDate, formatInZone, zonedToUtc } from "@/lib/datetime";
 import { isExclusionViolation, isUniqueViolation } from "@/lib/db-errors";
+import { quoteStay, rangeIsFree, type StayError } from "@/lib/stays";
 
 export class SlotUnavailableError extends Error {
   constructor() {
     super("The selected time is not available");
     this.name = "SlotUnavailableError";
+  }
+}
+
+/** The stay dates break the rental's rules (order, minimum or maximum length, horizon). */
+export class StayRulesError extends Error {
+  constructor(public reason: StayError | "past" | "too_far") {
+    super(`Invalid stay: ${reason}`);
+    this.name = "StayRulesError";
   }
 }
 
@@ -38,7 +48,7 @@ export type BookableService = {
   staffIds: string[];
 };
 
-/** Active services with their active staff (only those can be booked). */
+/** Active turno services (by the hour) with their active staff. Rentals: see listStayServices. */
 export async function listBookableServices(ctx: TenantScope): Promise<BookableService[]> {
   const org = ctx.organization.id;
   const [serviceRows, links] = await Promise.all([
@@ -52,7 +62,7 @@ export async function listBookableServices(ctx: TenantScope): Promise<BookableSe
         currency: services.currency,
       })
       .from(services)
-      .where(and(eq(services.organizationId, org), isNull(services.archivedAt)))
+      .where(and(eq(services.organizationId, org), eq(services.bookingType, "slot"), isNull(services.archivedAt)))
       .orderBy(services.name),
     db
       .select({ serviceId: serviceStaff.serviceId, staffId: serviceStaff.staffId })
@@ -62,6 +72,8 @@ export async function listBookableServices(ctx: TenantScope): Promise<BookableSe
   ]);
   return serviceRows.map((service) => ({
     ...service,
+    // Slot services always have a duration (DB check services_duration_range).
+    durationMinutes: service.durationMinutes!,
     staffIds: links.filter((link) => link.serviceId === service.id).map((link) => link.staffId),
   }));
 }
@@ -262,4 +274,84 @@ export async function listActiveStaffNames(ctx: TenantScope, ids?: string[]) {
       ),
     )
     .orderBy(staff.name);
+}
+
+export type StayBookingInput = {
+  serviceId: string;
+  /** Local calendar dates ("yyyy-MM-dd"). */
+  checkIn: string;
+  checkOut: string;
+  client: { id: string } | { name: string; phone: string };
+  status: AppointmentStatus;
+  source: "online" | "dashboard";
+  notes?: string | null;
+  withManageToken?: boolean;
+  /** Dashboard only: the owner agreed on a different total. */
+  price?: number;
+  now?: Date;
+};
+
+/**
+ * Books a rental. Prices and availability are re-computed here (a total sent
+ * by the browser is never trusted); the stays exclusion constraint settles
+ * races between two clients booking the same dates.
+ */
+export async function bookStay(ctx: TenantScope, input: StayBookingInput) {
+  const service = await getStayService(ctx, input.serviceId);
+  if (!service) throw new BookingReferenceError("serviceId");
+  const tz = ctx.settings.timezone;
+  const now = input.now ?? new Date();
+  const result = quoteStay(service, input.checkIn, input.checkOut, tz);
+  if (!result.ok) throw new StayRulesError(result.error);
+  const { quote } = result;
+
+  if (input.source === "online") {
+    const today = formatInZone(now, tz, "yyyy-MM-dd");
+    if (quote.startsAt.getTime() < now.getTime() + ctx.settings.minNoticeMinutes * 60_000) throw new StayRulesError("past");
+    if (input.checkIn > addDaysToDate(today, ctx.settings.maxDaysAhead)) throw new StayRulesError("too_far");
+  }
+  const taken = await loadOccupiedDates(ctx, service, input.checkIn, input.checkOut);
+  if (!rangeIsFree(service.stayUnit, input.checkIn, input.checkOut, taken)) throw new SlotUnavailableError();
+
+  const token = input.withManageToken ? newManageToken() : null;
+  try {
+    const appointment = await db.transaction(async (tx) => {
+      let clientId: string;
+      if ("id" in input.client) {
+        const [row] = await tx
+          .select({ id: clients.id })
+          .from(clients)
+          .where(and(eq(clients.organizationId, ctx.organization.id), eq(clients.id, input.client.id)));
+        if (!row) throw new BookingReferenceError("clientId");
+        clientId = row.id;
+      } else {
+        clientId = await findOrCreateClient(tx, ctx, input.client);
+      }
+      const [created] = await tx
+        .insert(appointments)
+        .values({
+          organizationId: ctx.organization.id,
+          clientId,
+          serviceId: service.id,
+          kind: "stay",
+          staffId: null,
+          startsAt: quote.startsAt,
+          endsAt: quote.endsAt,
+          status: input.status,
+          source: input.source,
+          price: input.source === "dashboard" && input.price !== undefined ? input.price : quote.total,
+          currency: service.currency,
+          notes: input.notes ?? null,
+          bookedName: "name" in input.client ? input.client.name : null,
+          manageTokenHash: token?.hash ?? null,
+        })
+        .returning({ id: appointments.id, status: appointments.status });
+      return created;
+    });
+    return { ...appointment, token: token?.token ?? null, quote };
+  } catch (error) {
+    if (isExclusionViolation(error)) throw new SlotUnavailableError();
+    if (isUniqueViolation(error, "appointments_manage_token_hash_unique")) throw new SlotUnavailableError();
+    throw error;
+  }
 }

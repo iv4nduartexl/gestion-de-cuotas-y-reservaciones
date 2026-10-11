@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { appointments, businessSettings, enrollments, organization, slugRedirects, staff } from "@/db/schema";
 import { ACTIVE_STATUSES } from "@/lib/appointment-status";
 import type { BusinessType, TeamMode } from "@/lib/business-types";
+import type { GraceUnit } from "@/lib/membership-constants";
 import type { TenantScope } from "./scope";
 
 export class TooManyStaffError extends Error {
@@ -121,7 +122,7 @@ export async function updatePublicProfile(
 
 export async function updateMembershipSettings(
   ctx: TenantScope,
-  input: { graceDays: number; paymentReminderTemplate: string | null },
+  input: { graceCount: number; graceUnit: GraceUnit; paymentReminderTemplate: string | null },
 ) {
   await db.update(businessSettings).set(input).where(eq(businessSettings.organizationId, ctx.organization.id));
 }

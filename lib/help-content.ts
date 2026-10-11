@@ -14,7 +14,8 @@ export type Section =
   | "schedule"
   | "team"
   | "plans"
-  | "settings";
+  | "settings"
+  | "business";
 
 export type HelpSettings = {
   businessType: BusinessType;
@@ -50,6 +51,7 @@ export const SECTION_HREFS: Record<Section, string> = {
   team: "/dashboard/staff",
   plans: "/dashboard/planes",
   settings: "/dashboard/settings",
+  business: "/dashboard/negocio",
 };
 
 const EXAMPLE_SERVICES: Record<BusinessType, [string, string][]> = {
@@ -168,6 +170,14 @@ export function sectionHelp(section: Section, settings: HelpSettings): SectionHe
         why: `Inscribís a un ${client.one} en un plan y Agenda arma sus cuotas solo, mes a mes.`,
         connectsTo: ["clients", "cuotas"],
         example: planExample(settings.businessType),
+      };
+    case "business":
+      return {
+        title: "Mi negocio",
+        subtitle: "Horarios, servicios y más",
+        what: "Todo lo que se configura una vez: horarios, servicios, planes, equipo y datos del negocio.",
+        why: "Lo dejás listo una vez y después solo entrás para cambiar algo.",
+        connectsTo: [],
       };
     case "settings":
       return {

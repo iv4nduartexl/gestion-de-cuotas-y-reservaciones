@@ -25,3 +25,6 @@ pool.on("error", (error) => console.error("Postgres pool error", error));
 export const db = drizzle(pool, { schema, casing: "snake_case" });
 
 export type Database = typeof db;
+export type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+/** The pool or an open transaction: lets data functions join a caller's transaction. */
+export type Executor = Database | Transaction;

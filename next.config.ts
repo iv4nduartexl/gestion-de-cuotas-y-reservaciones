@@ -47,6 +47,17 @@ const nextConfig: NextConfig = {
       },
     },
   },
+  // The app is Spanish-only and has no language prefixes. /es, /es-PY, /en…
+  // (from autocomplete or old links) would otherwise be read as a business
+  // link and show "Página no encontrada": send them to the same page without
+  // the prefix. These words are reserved as business links (lib/slug.ts).
+  async redirects() {
+    const locales = "es|es-py|es-PY|es-ar|es-AR|es-es|es-ES|en|en-us|en-US|pt|pt-br|pt-BR";
+    return [
+      { source: `/:locale(${locales})`, destination: "/", permanent: false },
+      { source: `/:locale(${locales})/:path*`, destination: "/:path*", permanent: false },
+    ];
+  },
   // HSTS is added by Caddy (only meaningful over https).
   async headers() {
     const privateLink = [
@@ -58,6 +69,7 @@ const nextConfig: NextConfig = {
       // Secret links (private turno page, email unsubscribe): never indexed or leaked via Referer.
       { source: "/:slug/turno/:path*", headers: privateLink },
       { source: "/baja/:path*", headers: privateLink },
+      { source: "/admin", headers: privateLink },
     ];
   },
 };

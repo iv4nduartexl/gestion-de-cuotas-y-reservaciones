@@ -3,6 +3,7 @@ import { boolean, check, integer, pgTable, text, timestamp } from "drizzle-orm/p
 
 import { BUSINESS_TYPES, TEAM_MODES } from "../../lib/business-types";
 import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "../../lib/constants";
+import { GRACE_UNITS } from "../../lib/membership-constants";
 import { organization } from "./auth";
 
 // Per-organization business configuration (1:1 with `organization`).
@@ -40,9 +41,11 @@ export const businessSettings = pgTable(
     address: text(),
     description: text(),
 
-    // Memberships: days after the due date before a cuota counts as overdue,
-    // and the WhatsApp reminder text ({nombre}, {plan}, {monto}, {vencimiento}).
-    graceDays: integer().notNull().default(0),
+    // Memberships: tolerance after the due date before a cuota counts as
+    // overdue (e.g. 5 days, 1 month), and the WhatsApp reminder text
+    // ({nombre}, {plan}, {monto}, {vencimiento}).
+    graceCount: integer().notNull().default(0),
+    graceUnit: text({ enum: GRACE_UNITS }).notNull().default("day"),
     paymentReminderTemplate: text(),
 
     // Reminders (Configuración → Recordatorios).
@@ -70,9 +73,14 @@ export const businessSettings = pgTable(
         and ${table.slotIntervalMinutes} in (5, 10, 15, 20, 30, 45, 60)
         and ${table.bufferMinutes} between 0 and 120
         and ${table.clientCancelNoticeHours} between 0 and 168
-        and ${table.graceDays} between 0 and 60
         and ${table.remindChargesDaysBefore} between 0 and 30
         and ${table.remindChargesDaysAfter} between 0 and 30`,
+    ),
+    check(
+      "business_settings_grace",
+      sql`(${table.graceUnit} = 'day' and ${table.graceCount} between 0 and 365)
+        or (${table.graceUnit} = 'week' and ${table.graceCount} between 0 and 52)
+        or (${table.graceUnit} = 'month' and ${table.graceCount} between 0 and 12)`,
     ),
     check(
       "business_settings_business_type",

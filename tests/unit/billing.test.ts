@@ -55,21 +55,71 @@ describe("period math", () => {
   });
 });
 
+const NONE = { count: 0, unit: "day" } as const;
+
+describe("flexible periods", () => {
+  it("bills every N days and yearly (Feb 29 anchored)", () => {
+    expect(periodsFor({ startDate: "2026-10-01", unit: "day", count: 10, until: "2026-10-25" }).map((p) => p.dueDate)).toEqual([
+      "2026-10-01",
+      "2026-10-11",
+      "2026-10-21",
+    ]);
+    expect(periodsFor({ startDate: "2028-02-29", unit: "year", count: 1, until: "2030-03-01" }).map((p) => p.dueDate)).toEqual([
+      "2028-02-29",
+      "2029-02-28",
+      "2030-02-28",
+    ]);
+  });
+
+  it("stays fast for daily plans over many years", () => {
+    const periods = periodsFor({ startDate: "2020-01-01", billFrom: "2026-10-01", unit: "day", count: 1, until: "2026-10-03" });
+    expect(periods.map((p) => p.dueDate)).toEqual(["2026-10-01", "2026-10-02", "2026-10-03"]);
+    expect(currentPeriodStart("2020-01-01", "day", 1, "2026-10-02")).toBe("2026-10-02");
+    expect(currentPeriodStart("2026-01-31", "month", 1, "2026-03-15")).toBe("2026-02-28");
+  });
+
+  it("pays at the end of the period (arrears)", () => {
+    const periods = periodsFor({ startDate: "2026-10-10", unit: "month", count: 1, until: "2026-11-15", timing: "arrears" });
+    // Nothing is due on the start day: the first cuota falls due a month later.
+    expect(periods).toEqual([{ periodStart: "2026-10-10", periodEnd: "2026-11-10", dueDate: "2026-11-10" }]);
+    expect(periodsFor({ startDate: "2026-10-10", unit: "month", count: 1, until: "2026-10-20", timing: "arrears" })).toEqual([]);
+  });
+
+  it("uses a custom first due date and a free first period", () => {
+    const custom = periodsFor({ startDate: "2026-10-10", unit: "month", count: 1, until: "2026-12-20", firstDueDate: "2026-10-25" });
+    expect(custom.map((p) => p.dueDate)).toEqual(["2026-10-25", "2026-11-10", "2026-12-10"]);
+    const free = periodsFor({ startDate: "2026-10-10", billFrom: "2026-11-10", unit: "month", count: 1, until: "2026-12-20" });
+    expect(free.map((p) => p.dueDate)).toEqual(["2026-11-10", "2026-12-10"]);
+  });
+});
+
 describe("statuses", () => {
   const charge = { status: "pending" as const, amount: 150000, dueDate: "2026-10-05" };
 
   it("derives pagada / parcial / pendiente / vencida / anulada", () => {
-    expect(chargeStatus(charge, 0, "2026-10-05", 0)).toBe("pendiente");
-    expect(chargeStatus(charge, 50000, "2026-10-05", 0)).toBe("parcial");
-    expect(chargeStatus(charge, 0, "2026-10-06", 0)).toBe("vencida");
-    expect(chargeStatus(charge, 50000, "2026-10-06", 0)).toBe("vencida");
-    expect(chargeStatus(charge, 150000, "2026-12-01", 0)).toBe("pagada");
-    expect(chargeStatus({ ...charge, status: "void" }, 0, "2026-12-01", 0)).toBe("anulada");
+    expect(chargeStatus(charge, 0, "2026-10-05", NONE)).toBe("pendiente");
+    expect(chargeStatus(charge, 50000, "2026-10-05", NONE)).toBe("parcial");
+    expect(chargeStatus(charge, 0, "2026-10-06", NONE)).toBe("vencida");
+    expect(chargeStatus(charge, 50000, "2026-10-06", NONE)).toBe("vencida");
+    expect(chargeStatus(charge, 150000, "2026-12-01", NONE)).toBe("pagada");
+    expect(chargeStatus({ ...charge, status: "void" }, 0, "2026-12-01", NONE)).toBe("anulada");
   });
 
   it("applies grace days", () => {
-    expect(chargeStatus(charge, 0, "2026-10-10", 5)).toBe("pendiente");
-    expect(chargeStatus(charge, 0, "2026-10-11", 5)).toBe("vencida");
+    expect(chargeStatus(charge, 0, "2026-10-10", { count: 5, unit: "day" })).toBe("pendiente");
+    expect(chargeStatus(charge, 0, "2026-10-11", { count: 5, unit: "day" })).toBe("vencida");
+  });
+
+  it("applies a tolerance of weeks or months", () => {
+    const oneMonth = { count: 1, unit: "month" } as const;
+    expect(chargeStatus(charge, 0, "2026-11-05", oneMonth)).toBe("pendiente");
+    expect(chargeStatus(charge, 0, "2026-11-06", oneMonth)).toBe("vencida");
+    expect(chargeStatus(charge, 0, "2026-10-12", { count: 1, unit: "week" })).toBe("pendiente");
+    expect(chargeStatus(charge, 0, "2026-10-13", { count: 1, unit: "week" })).toBe("vencida");
+    // Month-end anchoring: due Jan 31 + 1 month → overdue from Mar 1.
+    const endOfMonth = { ...charge, dueDate: "2027-01-31" };
+    expect(chargeStatus(endOfMonth, 0, "2027-02-28", oneMonth)).toBe("pendiente");
+    expect(chargeStatus(endOfMonth, 0, "2027-03-01", oneMonth)).toBe("vencida");
   });
 
   it("summarizes a member", () => {

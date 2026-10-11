@@ -36,6 +36,13 @@ export const envSchema = z
     // production build, so the strict checks below key off this flag
     // instead of NODE_ENV.
     DEPLOYMENT: z.enum(["local", "production"]).default("local"),
+    // Developer accounts that can open /admin and enter any business as its
+    // owner (comma separated). Only verified emails count. Empty = no admin.
+    ADMIN_EMAILS: z
+      .string()
+      .default("")
+      .transform((value) => value.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean))
+      .pipe(z.array(z.email("ADMIN_EMAILS must be a comma-separated list of emails"))),
   })
   .superRefine((env, ctx) => {
     if (env.EMAIL_TRANSPORT === "smtp") {

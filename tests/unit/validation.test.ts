@@ -82,6 +82,30 @@ describe("serviceSchema", () => {
   it("rejects durations that aren't multiples of 5", () => {
     expect(serviceSchema("PYG").safeParse({ name: "Corte", durationMinutes: "47", price: "1" }).success).toBe(false);
   });
+
+  it("allows turnos up to 24 h and sends longer ones to rentals", () => {
+    expect(serviceSchema("PYG").safeParse({ name: "Jornada", durationMinutes: "1440", price: "1" }).success).toBe(true);
+    const tooLong = serviceSchema("PYG").safeParse({ name: "Semana", durationMinutes: "1445", price: "1" });
+    expect(tooLong.success).toBe(false);
+  });
+
+  it("parses rentals with check-in/out and optional weekly price", () => {
+    const result = serviceSchema("PYG").parse({
+      bookingType: "stay",
+      name: "Casa de campo",
+      price: "300.000",
+      stayUnit: "night",
+      checkInTime: "14:00",
+      checkOutTime: "10:00",
+      minStay: "2",
+      maxStay: "",
+      weeklyPrice: "1.800.000",
+      monthlyPrice: "",
+    });
+    expect(result).toMatchObject({ bookingType: "stay", price: 300000, minStay: 2, maxStay: undefined, weeklyPrice: 1800000, monthlyPrice: null });
+    const bad = serviceSchema("PYG").safeParse({ bookingType: "stay", name: "Casa", price: "1", stayUnit: "night", checkInTime: "14:00", checkOutTime: "10:00", minStay: "5", maxStay: "2" });
+    expect(bad.success).toBe(false);
+  });
 });
 
 describe("blocked slots", () => {

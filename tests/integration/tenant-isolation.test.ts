@@ -38,6 +38,7 @@ const clientInput = (phone: string) => ({
 const serviceInput = (staffIds: string[] = []) => ({
   name: "Corte",
   description: null,
+  bookingType: "slot" as const,
   durationMinutes: 30,
   price: 50000,
   staffIds,

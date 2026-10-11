@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
+import { IssueBox } from "@/components/wizard/issue-box";
 import { useFormAction } from "@/hooks/use-form-action";
+import { bookingRuleIssues } from "@/lib/config-rules";
 
 type Rules = {
   autoConfirmBookings: boolean;
@@ -39,15 +41,24 @@ function withCurrent(options: readonly (readonly [number, string])[], current: n
   return options.some(([value]) => value === current) ? options : [...options, [current, format(current)] as const];
 }
 
-export function BookingRulesForm({ rules }: { rules: Rules }) {
+export function BookingRulesForm({ rules, shortestServiceMinutes }: { rules: Rules; shortestServiceMinutes: number | null }) {
   const { state, pending, formProps } = useFormAction(updateBookingRulesAction, {});
   const [autoConfirm, setAutoConfirm] = useState(rules.autoConfirmBookings);
+  const [values, setValues] = useState(rules);
   const errors = state.errors ?? {};
+  // Combinations that can't work are blocked here (and again on the server).
+  const issues = bookingRuleIssues(values, { shortestServiceMinutes });
 
-  const select = (name: keyof Rules, label: string, hint: string, options: readonly (readonly [number, string])[]) => (
+  const select = (name: Exclude<keyof Rules, "autoConfirmBookings">, label: string, hint: string, options: readonly (readonly [number, string])[]) => (
     <Field id={name} label={label} hint={hint} error={errors[name]}>
-      <NativeSelect id={name} name={name} className="w-full" defaultValue={String(rules[name])}>
-        {withCurrent(options, Number(rules[name]), (n) => String(n)).map(([value, text]) => (
+      <NativeSelect
+        id={name}
+        name={name}
+        className="w-full"
+        value={String(values[name])}
+        onChange={(event) => setValues((current) => ({ ...current, [name]: Number(event.target.value) }))}
+      >
+        {withCurrent(options, Number(values[name]), (n) => String(n)).map(([value, text]) => (
           <NativeSelectOption key={value} value={value}>
             {text}
           </NativeSelectOption>
@@ -74,12 +85,18 @@ export function BookingRulesForm({ rules }: { rules: Rules }) {
       <div className="grid gap-5 sm:grid-cols-2">
         {select("minNoticeMinutes", "Anticipación mínima", "Para no recibir turnos de último momento.", MIN_NOTICE)}
         {select("maxDaysAhead", "Hasta cuándo se puede reservar", "Desde hoy en adelante.", MAX_DAYS)}
-        {select("slotIntervalMinutes", "Horarios que se ofrecen", "08:00, 08:15, 08:30… según lo que elijas.", INTERVALS)}
-        {select("bufferMinutes", "Pausa entre turnos", "Tiempo libre después de cada turno.", BUFFERS)}
         {select("clientCancelNoticeHours", "Cancelación online", "Hasta cuándo el cliente puede cancelar desde su link.", CANCEL)}
       </div>
+      <details className="rounded-2xl border p-4" open={issues.some((i) => i.field === "slotIntervalMinutes")}>
+        <summary className="cursor-pointer text-sm font-semibold">Más opciones</summary>
+        <div className="mt-4 grid gap-5 sm:grid-cols-2">
+          {select("slotIntervalMinutes", "Horarios que se ofrecen", "08:00, 08:15, 08:30… según lo que elijas.", INTERVALS)}
+          {select("bufferMinutes", "Pausa entre turnos", "Tiempo libre después de cada turno.", BUFFERS)}
+        </div>
+      </details>
+      <IssueBox issues={issues} onFix={(fix) => setValues((current) => ({ ...current, ...fix.patch }))} />
       <div>
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending || issues.length > 0}>
           {pending ? "Guardando…" : "Guardar reglas"}
         </Button>
       </div>

@@ -55,28 +55,42 @@ function overlaps(a: Interval, b: Interval) {
   return a.start < b.end && b.start < a.end;
 }
 
-/** Start times one person can take on one date. */
+/**
+ * Start times one person can take on one date. A turno starts inside an open
+ * block and must end inside an open block of the same day; it may cross a
+ * break (e.g. 12 h from 08:00 to 20:00 over the lunch gap). Días libres and
+ * existing turnos still block the whole span.
+ */
 function startsForStaff(person: StaffAvailability, date: string, options: SlotOptions): number[] {
   const duration = options.durationMinutes * MINUTE;
   const step = options.slotIntervalMinutes * MINUTE;
   const buffer = options.bufferMinutes * MINUTE;
   const weekday = isoWeekday(date);
+  const windows = person.rules
+    .filter((rule) => rule.weekday === weekday)
+    .map((rule) => ({
+      start: zonedToUtc(date, rule.startTime, options.timeZone).getTime(),
+      end: zonedToUtc(date, rule.endTime, options.timeZone).getTime(),
+    }))
+    .sort((a, b) => a.start - b.start);
+  if (windows.length === 0) return [];
+  const dayEnd = windows[windows.length - 1].end;
+  const endsInsideOpenHours = (end: number) => windows.some((window) => end > window.start && end <= window.end);
+
   const starts: number[] = [];
-
-  for (const rule of person.rules) {
-    if (rule.weekday !== weekday) continue;
-    const windowStart = zonedToUtc(date, rule.startTime, options.timeZone).getTime();
-    const windowEnd = zonedToUtc(date, rule.endTime, options.timeZone).getTime();
-
-    for (let start = windowStart; start + duration <= windowEnd; start += step) {
+  for (const window of windows) {
+    for (let start = window.start; start < window.end; start += step) {
+      const end = start + duration;
+      if (end > dayEnd) break;
+      if (!endsInsideOpenHours(end)) continue;
       if (start < options.earliestStart) continue;
       if (options.latestStart !== undefined && start >= options.latestStart) break;
 
-      const slot = { start, end: start + duration };
+      const slot = { start, end };
       if (person.blocks.some((block) => overlaps(slot, block))) continue;
       // Existing turnos keep their buffer after them, and the new one needs
       // its own buffer before the next turno.
-      const withBuffer = { start, end: start + duration + buffer };
+      const withBuffer = { start, end: end + buffer };
       if (person.busy.some((turno) => overlaps(withBuffer, { start: turno.start, end: turno.end + buffer }))) {
         continue;
       }
@@ -84,6 +98,23 @@ function startsForStaff(person: StaffAvailability, date: string, options: SlotOp
     }
   }
   return starts;
+}
+
+/**
+ * Longest turno (in minutes) that fits on any weekday with these hours: from
+ * the first opening to the last closing of the day. Used to warn when a
+ * service is too long to ever be booked.
+ */
+export function longestBookableMinutes(rules: { weekday: number; startTime: string; endTime: string }[]): number {
+  const toMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+  const byDay = new Map<number, { first: number; last: number }>();
+  for (const rule of rules) {
+    const day = byDay.get(rule.weekday);
+    const start = toMinutes(rule.startTime);
+    const end = toMinutes(rule.endTime);
+    byDay.set(rule.weekday, day ? { first: Math.min(day.first, start), last: Math.max(day.last, end) } : { first: start, last: end });
+  }
+  return Math.max(0, ...[...byDay.values()].map((day) => day.last - day.first));
 }
 
 /**

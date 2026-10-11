@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { NavIcon } from "@/components/dashboard/nav-icon";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { allNavItems, isActivePath, mobileTabs, type Navigation } from "@/lib/navigation";
+import { allNavItems, isActiveItem, mobileTabs, type Navigation } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 
 const tabClassName = "flex flex-col items-center gap-1 rounded-xl py-1.5 text-xs font-semibold";
@@ -31,7 +31,7 @@ export function MobileTabBar({ navigation }: { navigation: Navigation }) {
   const [open, setOpen] = useState(false);
   const tabs = mobileTabs(navigation);
   const rest = allNavItems(navigation).filter((item) => !tabs.some((tab) => tab.href === item.href));
-  const moreActive = rest.some((item) => isActivePath(pathname, item.href));
+  const moreActive = rest.some((item) => isActiveItem(pathname, item));
   const moreBadge = rest.reduce((sum, item) => sum + (item.badge ?? 0), 0);
 
   return (
@@ -41,7 +41,7 @@ export function MobileTabBar({ navigation }: { navigation: Navigation }) {
         className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t bg-card/95 px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur md:hidden"
       >
         {tabs.map((item) => {
-          const active = isActivePath(pathname, item.href);
+          const active = isActiveItem(pathname, item);
           return (
             <Link
               key={item.href}
@@ -74,14 +74,14 @@ export function MobileTabBar({ navigation }: { navigation: Navigation }) {
           <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-muted" aria-hidden="true" />
           <SheetHeader className="px-1 pb-2">
             <SheetTitle className="text-lg font-bold">Todas las secciones</SheetTitle>
-            <SheetDescription>“Tu día” es lo que usás seguido; “Tu negocio” se configura una vez.</SheetDescription>
+            <SheetDescription>Lo de todos los días, y “Mi negocio” para configurar.</SheetDescription>
           </SheetHeader>
           {navigation.groups.map((group) => (
-            <section key={group.id} className="flex flex-col gap-1 py-2">
-              <h2 className="px-1 text-[11px] font-bold tracking-[0.12em] text-muted-foreground uppercase">{group.label}</h2>
+            <section key={group.id} className={cn("flex flex-col gap-1 py-2", group.id === "business" && "border-t")}>
+              {group.label && <h2 className="px-1 text-[11px] font-bold tracking-[0.12em] text-muted-foreground uppercase">{group.label}</h2>}
               <ul className="grid grid-cols-1 gap-1">
                 {group.items.map((item) => {
-                  const active = isActivePath(pathname, item.href);
+                  const active = isActiveItem(pathname, item);
                   return (
                     <li key={item.href}>
                       <Link
@@ -103,7 +103,7 @@ export function MobileTabBar({ navigation }: { navigation: Navigation }) {
                             {item.todo && <span className="size-2 rounded-full bg-coral" title="Falta configurar" />}
                           </span>
                           <span id={`more-${item.icon}`} aria-hidden="true" className="truncate text-sm text-muted-foreground">
-                            {item.todo ? "Falta configurar · " : ""}
+                            {item.todo ? "Hay algo para revisar · " : ""}
                             {item.subtitle}
                           </span>
                         </span>

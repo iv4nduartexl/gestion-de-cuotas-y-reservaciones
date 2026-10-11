@@ -6,6 +6,8 @@ import { db } from "@/db";
 import { businessSettings, organization } from "@/db/schema";
 import { listActiveStaffNames, listBookableServices } from "@/lib/booking";
 import { staffWithHours } from "./availability";
+import { findServiceProblems } from "./services";
+import { listStayServices } from "./stays";
 import type { TenantScope } from "./scope";
 
 /**
@@ -33,6 +35,15 @@ export async function getPublicCatalog(business: PublicBusiness) {
     .map((service) => ({ ...service, staffIds: service.staffIds.filter((id) => withHours.has(id)) }))
     .filter((service) => service.staffIds.length > 0);
   const staffIds = [...new Set(bookable.flatMap((service) => service.staffIds))];
-  const staff = await listActiveStaffNames(business, staffIds);
-  return { services: bookable, staff };
+  const [staff, stays, problems] = await Promise.all([
+    listActiveStaffNames(business, staffIds),
+    listStayServices(business),
+    findServiceProblems(business),
+  ]);
+  // Never offer something that can't actually be booked.
+  return {
+    services: bookable.filter((service) => !problems.has(service.id)),
+    staff,
+    stays: stays.filter((stay) => !problems.has(stay.id)),
+  };
 }
