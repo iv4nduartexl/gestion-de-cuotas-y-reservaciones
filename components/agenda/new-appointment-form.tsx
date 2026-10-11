@@ -16,6 +16,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Switch } from "@/components/ui/switch";
 import { SectionCard } from "@/components/ui-kit/section-card";
 import { useFormAction } from "@/hooks/use-form-action";
+import type { ActionState } from "@/lib/actions";
 import { formatDuration } from "@/lib/datetime";
 import { formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
@@ -29,8 +30,10 @@ export function NewAppointmentForm({
   lockedStaffId,
   initialDate,
   initialStaffId,
+  initialServiceId,
   initialSlots,
   clientNoun,
+  change,
 }: {
   services: ServiceOption[];
   staff: { id: string; name: string }[];
@@ -39,20 +42,28 @@ export function NewAppointmentForm({
   lockedStaffId: string | null;
   initialDate: string;
   initialStaffId: string | null;
+  initialServiceId?: string;
   initialSlots: { start: string; time: string }[];
   clientNoun: string;
+  /** Moving an existing turno: no client or comment, its time doesn't block itself. */
+  change?: {
+    appointmentId: string;
+    /** changeAppointmentAction bound to the turno (from the server page). */
+    action: (state: ActionState, formData: FormData) => Promise<ActionState>;
+    currentStart: string;
+  };
 }) {
-  const { state, pending, formProps } = useFormAction(createAppointmentAction, {});
+  const { state, pending, formProps } = useFormAction(change?.action ?? createAppointmentAction, {});
   const errors = state.errors ?? {};
 
   const [client, setClient] = useState<ClientOption | null>(null);
 
   // Turno
-  const [serviceId, setServiceId] = useState(services[0]?.id ?? "");
+  const [serviceId, setServiceId] = useState(initialServiceId ?? services[0]?.id ?? "");
   const [staffChoice, setStaffChoice] = useState(lockedStaffId ?? initialStaffId ?? "any");
   const [date, setDate] = useState(initialDate);
   const [slots, setSlots] = useState<{ start: string; time: string }[]>(initialSlots);
-  const [start, setStart] = useState("");
+  const [start, setStart] = useState(change?.currentStart ?? "");
   const [manual, setManual] = useState(false);
   const [time, setTime] = useState("09:00");
   const [loadingSlots, startSlots] = useTransition();
@@ -63,7 +74,7 @@ export function NewAppointmentForm({
   function loadSlots(next: { serviceId: string; staffChoice: string; date: string }) {
     setStart("");
     if (!next.serviceId || !next.date) return;
-    startSlots(async () => setSlots(await getDashboardSlotsAction(next)));
+    startSlots(async () => setSlots(await getDashboardSlotsAction({ ...next, excludeId: change?.appointmentId })));
   }
 
   const update = (patch: Partial<{ serviceId: string; staffChoice: string; date: string }>) => {
@@ -84,11 +95,16 @@ export function NewAppointmentForm({
       <input type="hidden" name="manualTime" value={String(manual)} />
       <input type="hidden" name="time" value={time} />
 
-      <SectionCard title={`¿Para quién?`} description={`Buscá un ${clientNoun} o cargá uno nuevo con su teléfono.`}>
-        <ClientPicker clientNoun={clientNoun} errors={errors} client={client} onClientChange={setClient} />
-      </SectionCard>
+      {!change && (
+        <SectionCard title={`¿Para quién?`} description={`Buscá un ${clientNoun} o cargá uno nuevo con su teléfono.`}>
+          <ClientPicker clientNoun={clientNoun} errors={errors} client={client} onClientChange={setClient} />
+        </SectionCard>
+      )}
 
-      <SectionCard title="Turno">
+      <SectionCard
+        title={change ? "¿A qué día y hora lo pasás?" : "Turno"}
+        description={change ? "Elegí un horario libre. El horario actual queda marcado; si cambiás el servicio, cambia la duración y el precio." : undefined}
+      >
         <div className="grid gap-5 sm:grid-cols-2">
           <Field id="service" label="Servicio" error={errors.serviceId}>
             <NativeSelect id="service" className="w-full" value={serviceId} onChange={(event) => update({ serviceId: event.target.value })}>
@@ -164,12 +180,12 @@ export function NewAppointmentForm({
           </div>
         )}
 
-        <TextareaField name="notes" label="Comentario" optional rows={2} error={errors.notes} />
+        {!change && <TextareaField name="notes" label="Comentario" optional rows={2} error={errors.notes} />}
       </SectionCard>
 
       <div className="sticky bottom-24 z-10 flex justify-end md:bottom-6">
         <Button type="submit" size="lg" disabled={pending || (!manual && !start)} className="shadow-lift">
-          {pending ? "Agendando…" : "Agendar turno"}
+          {change ? (pending ? "Guardando…" : "Guardar cambio") : pending ? "Agendando…" : "Agendar turno"}
         </Button>
       </div>
     </form>

@@ -11,13 +11,20 @@ import {
   BookingReferenceError,
   getAvailability,
   listBookableServices,
+  AppointmentClosedError,
   bookStay,
+  changeAppointment,
+  changeStayDates,
   SlotUnavailableError,
   StayRulesError,
 } from "@/lib/booking";
+import { recordAudit } from "@/lib/audit";
+import { createClient } from "@/lib/data/clients";
 import {
+  changeAppointmentClient,
   getAppointment,
   InvalidTransitionError,
+  updateAppointmentPrice,
   setAppointmentStatus,
   updateInternalNotes,
 } from "@/lib/data/appointments";
@@ -30,7 +37,15 @@ import { parseMoneyInput } from "@/lib/money";
 import { normalizePhone } from "@/lib/phone";
 import type { TenantContext } from "@/lib/tenant";
 import { optionalText } from "@/lib/validation/common";
-import { dashboardBookingSchema, dashboardStayBookingSchema, stayCalendarQuerySchema } from "@/lib/validation/booking";
+import { isUniqueViolation } from "@/lib/db-errors";
+import {
+  changeClientSchema,
+  changeStayDatesSchema,
+  changeTurnoSchema,
+  dashboardBookingSchema,
+  dashboardStayBookingSchema,
+  stayCalendarQuerySchema,
+} from "@/lib/validation/booking";
 import type { StayCalendar } from "@/app/[slug]/actions";
 
 const APPOINTMENTS = { product: "appointments" } as const;
@@ -42,12 +57,13 @@ async function restrictedStaffId(ctx: TenantContext) {
   return own?.id ?? "none";
 }
 
-export async function getDashboardSlotsAction(query: { serviceId: string; staffChoice: string; date: string }) {
+export async function getDashboardSlotsAction(query: { serviceId: string; staffChoice: string; date: string; excludeId?: string }) {
   const ctx = await authorizeAction({ appointment: ["create"] }, APPOINTMENTS);
   if (!ctx || !DATE_PATTERN.test(query.date)) return [];
   const service = (await listBookableServices(ctx)).find((s) => s.id === query.serviceId);
   if (!service) return [];
-  const [day] = await getAvailability(ctx, service, query.staffChoice, query.date, 1, { online: false });
+  const excludeId = query.excludeId ? (parseId(query.excludeId) ?? undefined) : undefined;
+  const [day] = await getAvailability(ctx, service, query.staffChoice, query.date, 1, { online: false, excludeId });
   return day.slots.map(({ start, time }) => ({ start, time }));
 }
 
@@ -163,16 +179,7 @@ export async function createStayAppointmentAction(_prev: ActionState, formData: 
     if (error instanceof SlotUnavailableError) {
       return { errors: { checkIn: "Alguna de esas fechas ya está ocupada. Elegí otras." } };
     }
-    if (error instanceof StayRulesError) {
-      const messages = {
-        order: "La salida tiene que ser después de la entrada.",
-        too_short: "La estadía es más corta que el mínimo.",
-        too_long: "La estadía es más larga que el máximo.",
-        past: "Esa fecha ya pasó.",
-        too_far: "Esa fecha está demasiado lejos.",
-      };
-      return { errors: { checkIn: messages[error.reason] } };
-    }
+    if (error instanceof StayRulesError) return { errors: { checkIn: STAY_RULE_MESSAGES[error.reason] } };
     if (error instanceof BookingReferenceError) {
       return { errors: { [error.field === "clientId" ? "client" : "serviceId"]: "Ya no está disponible. Recargá la página." } };
     }
@@ -227,4 +234,127 @@ export async function updateInternalNotesAction(
   await updateInternalNotes(ctx, id, parsed.data.internalNotes);
   refresh();
   return { message: "Nota guardada" };
+}
+
+const STAY_RULE_MESSAGES = {
+  order: "La salida tiene que ser después de la entrada.",
+  too_short: "La estadía es más corta que el mínimo.",
+  too_long: "La estadía es más larga que el máximo.",
+  past: "Esa fecha ya pasó.",
+  too_far: "Esa fecha está demasiado lejos.",
+};
+
+/** The turno, if this user may change it (members: only their own). */
+async function editableTurno(appointmentId: string) {
+  const ctx = await authorizeAction({ appointment: ["update"] }, APPOINTMENTS);
+  const id = parseId(appointmentId);
+  if (!ctx || !id) return null;
+  const turno = await getAppointment(ctx, id);
+  const restricted = await restrictedStaffId(ctx);
+  if (!turno || (restricted && turno.staffId !== restricted)) return null;
+  return { ctx, turno, restricted };
+}
+
+/** "Cambiar día y hora" (and service / person) of a turno. */
+export async function changeAppointmentAction(appointmentId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  const found = await editableTurno(appointmentId);
+  if (!found) return FORBIDDEN;
+  const { ctx, turno, restricted } = found;
+  const parsed = parseForm(changeTurnoSchema, formData);
+  if (!parsed.success) return { errors: parsed.errors };
+  const input = parsed.data;
+  if (restricted && input.staffChoice !== restricted) return { errors: { staffChoice: "Solo podés mover tus propios turnos." } };
+  const start = input.manualTime ? zonedToUtc(input.date, input.time, ctx.settings.timezone).toISOString() : input.start;
+  try {
+    const { before, after } = await changeAppointment(ctx, turno.id, { ...input, start });
+    await recordAudit(ctx, "appointment.changed", { type: "appointment", id: turno.id }, {
+      from: before.startsAt.toISOString(),
+      to: after.startsAt.toISOString(),
+      ...(before.serviceId !== after.serviceId && { serviceFrom: before.serviceId, serviceTo: after.serviceId }),
+      ...(before.staffId !== after.staffId && { staffFrom: before.staffId, staffTo: after.staffId }),
+    });
+  } catch (error) {
+    if (error instanceof SlotUnavailableError) {
+      return {
+        errors: {
+          [input.manualTime ? "time" : "start"]: input.manualTime
+            ? "Ese horario se superpone con otro turno de esa persona."
+            : "Ese horario ya no está libre. Elegí otro.",
+        },
+      };
+    }
+    if (error instanceof AppointmentClosedError) return { errors: { form: "Este turno ya no se puede mover (está cancelado o ya pasó)." } };
+    if (error instanceof BookingReferenceError) return { errors: { [error.field]: "Ya no está disponible. Recargá la página." } };
+    throw error;
+  }
+  redirect(withFlash(`/dashboard/agenda/${turno.id}`, "turno-cambiado"));
+}
+
+/** "Cambiar fechas" of a rental (members don't manage rentals). */
+export async function changeStayDatesAction(appointmentId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  const found = await editableTurno(appointmentId);
+  if (!found || found.restricted) return FORBIDDEN;
+  const { ctx, turno } = found;
+  const parsed = parseForm(changeStayDatesSchema, formData);
+  if (!parsed.success) return { errors: parsed.errors };
+  try {
+    const { before, after } = await changeStayDates(ctx, turno.id, parsed.data);
+    await recordAudit(ctx, "stay.dates_changed", { type: "appointment", id: turno.id }, {
+      from: before.startsAt.toISOString(),
+      to: after.startsAt.toISOString(),
+      priceFrom: before.price,
+      priceTo: after.price,
+    });
+  } catch (error) {
+    if (error instanceof SlotUnavailableError) return { errors: { checkIn: "Alguna de esas fechas ya está ocupada. Elegí otras." } };
+    if (error instanceof StayRulesError) return { errors: { checkIn: STAY_RULE_MESSAGES[error.reason] } };
+    if (error instanceof AppointmentClosedError) return { errors: { form: "Esta reserva ya no se puede cambiar (está cancelada o ya pasó)." } };
+    if (error instanceof BookingReferenceError) return { errors: { form: "Este alquiler ya no está disponible." } };
+    throw error;
+  }
+  redirect(withFlash(`/dashboard/agenda/${turno.id}`, "turno-cambiado"));
+}
+
+/** "Cambiar precio": what this turno or rental costs (discount, extra). */
+export async function changeAppointmentPriceAction(appointmentId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  const found = await editableTurno(appointmentId);
+  if (!found) return FORBIDDEN;
+  const { ctx, turno } = found;
+  const price = parseMoneyInput(String(formData.get("price") ?? ""), turno.currency);
+  if (price === null) return { errors: { price: "Escribí un precio válido." } };
+  const changed = await updateAppointmentPrice(ctx, turno.id, price);
+  if (!changed) return { errors: { form: "Este turno está cancelado: no se puede cambiar el precio." } };
+  await recordAudit(ctx, "appointment.price_changed", { type: "appointment", id: turno.id }, { from: changed.before, to: price });
+  redirect(withFlash(`/dashboard/agenda/${turno.id}`, "turno-cambiado"));
+}
+
+/** "Cambiar cliente": the turno is someone else's (existing or new). */
+export async function changeAppointmentClientAction(appointmentId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  const found = await editableTurno(appointmentId);
+  if (!found) return FORBIDDEN;
+  const { ctx, turno } = found;
+  const parsed = parseForm(changeClientSchema, formData);
+  if (!parsed.success) return { errors: parsed.errors };
+  let clientId = parsed.data.clientId;
+  if (!clientId) {
+    try {
+      const created = await createClient(ctx, {
+        name: parsed.data.newClientName!,
+        phone: normalizePhone(parsed.data.newClientPhone)!,
+        email: null,
+        documentNumber: null,
+        notes: null,
+      });
+      clientId = created.id;
+    } catch (error) {
+      if (isUniqueViolation(error, "clients_org_phone_unique")) {
+        return { errors: { newClientPhone: "Ya existe alguien con ese teléfono: buscalo por nombre." } };
+      }
+      throw error;
+    }
+  }
+  const changed = await changeAppointmentClient(ctx, turno.id, clientId);
+  if (!changed) return { errors: { client: "Esa persona ya no está disponible." } };
+  await recordAudit(ctx, "appointment.client_changed", { type: "appointment", id: turno.id }, { from: changed.before, to: clientId });
+  redirect(withFlash(`/dashboard/agenda/${turno.id}`, "turno-cambiado"));
 }

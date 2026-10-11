@@ -5,8 +5,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appointments, clients, services, serviceStaff, staff } from "@/db/schema";
-import type { AppointmentStatus } from "@/lib/appointment-status";
+import { appointments, clients, reminders, services, serviceStaff, staff } from "@/db/schema";
+import { ACTIVE_STATUSES, type AppointmentStatus } from "@/lib/appointment-status";
 import { computeSlots, pickStaff, type SlotOptions } from "@/lib/availability";
 import { loadStaffAvailability } from "@/lib/data/availability";
 import { getStayService, loadOccupiedDates } from "@/lib/data/stays";
@@ -107,7 +107,7 @@ export async function getAvailability(
   staffChoice: string | "any",
   fromDate: string,
   days: number,
-  { online, now = new Date() }: { online: boolean; now?: Date },
+  { online, now = new Date(), excludeId }: { online: boolean; now?: Date; /** A turno being moved. */ excludeId?: string },
 ) {
   const candidates = staffChoice === "any" ? service.staffIds : service.staffIds.filter((id) => id === staffChoice);
   const dates = Array.from({ length: days }, (_, i) => addDaysToDate(fromDate, i));
@@ -116,6 +116,7 @@ export async function getAvailability(
     staffIds: candidates,
     from: zonedToUtc(dates[0], "00:00", tz),
     to: zonedToUtc(addDaysToDate(dates.at(-1)!, 1), "00:00", tz),
+    excludeAppointmentId: excludeId,
   });
   return computeSlots(people, slotOptionsFor(ctx, service, dates, { online, now }));
 }
@@ -179,7 +180,16 @@ export type BookingInput = {
  * database exclusion constraint for races: throws SlotUnavailableError when
  * the time is no longer free.
  */
-export async function bookAppointment(ctx: TenantScope, input: BookingInput) {
+/**
+ * Where a turno goes: checks the slot is free (or, for manual times, that the
+ * person exists) and picks the staff for "any". `excludeId` is a turno being
+ * moved, so its current time doesn't block itself.
+ */
+async function resolveSlot(
+  ctx: TenantScope,
+  input: Pick<BookingInput, "serviceId" | "staffChoice" | "start" | "source" | "manualTime" | "now">,
+  excludeId?: string,
+) {
   const online = input.source === "online";
   const service = (await listBookableServices(ctx)).find((s) => s.id === input.serviceId);
   if (!service) throw new BookingReferenceError("serviceId");
@@ -209,7 +219,7 @@ export async function bookAppointment(ctx: TenantScope, input: BookingInput) {
     if (input.staffChoice !== "any" && !service.staffIds.includes(input.staffChoice)) {
       throw new BookingReferenceError("staffId");
     }
-    const [day] = await getAvailability(ctx, service, input.staffChoice, date, 1, { online, now: input.now });
+    const [day] = await getAvailability(ctx, service, input.staffChoice, date, 1, { online, now: input.now, excludeId });
     const slot = day.slots.find((s) => s.start === start.toISOString());
     if (!slot) throw new SlotUnavailableError();
     const dayStart = zonedToUtc(date, "00:00", tz);
@@ -218,6 +228,11 @@ export async function bookAppointment(ctx: TenantScope, input: BookingInput) {
     if (!picked) throw new SlotUnavailableError();
     staffId = picked;
   }
+  return { service, start, end, staffId };
+}
+
+export async function bookAppointment(ctx: TenantScope, input: BookingInput) {
+  const { service, start, end, staffId } = await resolveSlot(ctx, input);
 
   const token = input.withManageToken ? newManageToken() : null;
   try {
@@ -352,6 +367,107 @@ export async function bookStay(ctx: TenantScope, input: StayBookingInput) {
   } catch (error) {
     if (isExclusionViolation(error)) throw new SlotUnavailableError();
     if (isUniqueViolation(error, "appointments_manage_token_hash_unique")) throw new SlotUnavailableError();
+    throw error;
+  }
+}
+
+/** The turno can't be changed any more (cancelled, attended or not found). */
+export class AppointmentClosedError extends Error {
+  constructor() {
+    super("The appointment can no longer be changed");
+    this.name = "AppointmentClosedError";
+  }
+}
+
+/** Locks an active appointment of this business, or throws AppointmentClosedError. */
+async function lockActive(tx: Tx, ctx: TenantScope, id: string, kind: "slot" | "stay") {
+  const [row] = await tx
+    .select()
+    .from(appointments)
+    .where(and(eq(appointments.organizationId, ctx.organization.id), eq(appointments.id, id), eq(appointments.kind, kind)))
+    .for("update");
+  if (!row || !(ACTIVE_STATUSES as readonly string[]).includes(row.status)) throw new AppointmentClosedError();
+  return row;
+}
+
+/** Reminders already planned or sent for the old time no longer apply. */
+async function resetReminders(tx: Tx, appointmentId: string) {
+  await tx.delete(reminders).where(eq(reminders.appointmentId, appointmentId));
+}
+
+/**
+ * Moves a turno and/or changes its service or person. Same checks as a new
+ * booking (free slot, or any time "a mano"), without the turno blocking
+ * itself. A new service brings its own price; otherwise the price is kept.
+ */
+export async function changeAppointment(
+  ctx: TenantScope,
+  id: string,
+  input: { serviceId: string; staffChoice: string | "any"; start: string; manualTime?: boolean; now?: Date },
+) {
+  const { service, start, end, staffId } = await resolveSlot(ctx, { ...input, source: "dashboard" }, id);
+  try {
+    return await db.transaction(async (tx) => {
+      const before = await lockActive(tx, ctx, id, "slot");
+      const serviceChanged = before.serviceId !== service.id;
+      const [after] = await tx
+        .update(appointments)
+        .set({
+          serviceId: service.id,
+          staffId,
+          startsAt: start,
+          endsAt: end,
+          ...(serviceChanged && { price: service.price, currency: service.currency }),
+        })
+        .where(eq(appointments.id, id))
+        .returning();
+      if (before.startsAt.getTime() !== start.getTime()) await resetReminders(tx, id);
+      return { before, after };
+    });
+  } catch (error) {
+    if (isExclusionViolation(error)) throw new SlotUnavailableError();
+    throw error;
+  }
+}
+
+/**
+ * Changes a rental's dates. The new nights must follow the rental's rules and
+ * be free (the stay itself doesn't count). The price is re-quoted unless
+ * `keepPrice`.
+ */
+export async function changeStayDates(
+  ctx: TenantScope,
+  id: string,
+  input: { checkIn: string; checkOut: string; keepPrice: boolean },
+) {
+  const [current] = await db
+    .select({ serviceId: appointments.serviceId })
+    .from(appointments)
+    .where(and(eq(appointments.organizationId, ctx.organization.id), eq(appointments.id, id), eq(appointments.kind, "stay")));
+  if (!current) throw new AppointmentClosedError();
+  const service = await getStayService(ctx, current.serviceId);
+  if (!service) throw new BookingReferenceError("serviceId");
+  const result = quoteStay(service, input.checkIn, input.checkOut, ctx.settings.timezone);
+  if (!result.ok) throw new StayRulesError(result.error);
+  const taken = await loadOccupiedDates(ctx, service, input.checkIn, input.checkOut, id);
+  if (!rangeIsFree(service.stayUnit, input.checkIn, input.checkOut, taken)) throw new SlotUnavailableError();
+  try {
+    return await db.transaction(async (tx) => {
+      const before = await lockActive(tx, ctx, id, "stay");
+      const [after] = await tx
+        .update(appointments)
+        .set({
+          startsAt: result.quote.startsAt,
+          endsAt: result.quote.endsAt,
+          ...(!input.keepPrice && { price: result.quote.total }),
+        })
+        .where(eq(appointments.id, id))
+        .returning();
+      if (before.startsAt.getTime() !== after.startsAt.getTime()) await resetReminders(tx, id);
+      return { before, after, quote: result.quote };
+    });
+  } catch (error) {
+    if (isExclusionViolation(error)) throw new SlotUnavailableError();
     throw error;
   }
 }

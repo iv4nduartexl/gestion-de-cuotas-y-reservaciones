@@ -202,6 +202,99 @@ export function bookingRuleIssues(values: BookingRuleValues, { shortestServiceMi
   return issues;
 }
 
+// ── Cuotas: changing what is owed ───────────────────────────────────────
+
+export type ChargeAmountValues = { amount: number | null };
+
+/** A new total for a cuota: never below what was already paid. */
+export function chargeAmountIssues(values: ChargeAmountValues, { paid, currency }: { paid: number; currency: string }): Issue<ChargeAmountValues>[] {
+  if (values.amount === null || !Number.isInteger(values.amount)) return [issue<ChargeAmountValues>("amount", "Escribí el nuevo monto.")];
+  if (values.amount < paid) {
+    return [
+      issue<ChargeAmountValues>("amount", `Ya pagó ${formatMoney(paid, currency)}: el monto no puede ser menor a eso.`, [
+        { label: `Dejar ${formatMoney(paid, currency)} (queda pagada)`, patch: { amount: paid } },
+      ]),
+    ];
+  }
+  if (values.amount === 0) return [issue<ChargeAmountValues>("amount", "Para no cobrarla, usá “Anular” en vez de poner 0.")];
+  return [];
+}
+
+export type SplitPart = { amount: number | null; dueDate: string };
+export type SplitValues = { parts: SplitPart[] };
+export const MAX_SPLIT_PARTS = 4;
+
+/** `total` in `count` integer parts that add up exactly (the first one takes the remainder). */
+export function equalParts(total: number, count: number): number[] {
+  const base = Math.floor(total / count);
+  return Array.from({ length: count }, (_, i) => base + (i === 0 ? total - base * count : 0));
+}
+
+/** Splitting what's left of a cuota: 2–4 parts that add up to it, each with a due date, in order. */
+export function splitIssues(values: SplitValues, { remaining, currency }: { remaining: number; currency: string }): Issue<SplitValues>[] {
+  const issues: Issue<SplitValues>[] = [];
+  const { parts } = values;
+  const evenly = (count: number) => {
+    const amounts = equalParts(remaining, count);
+    return { parts: parts.slice(0, count).map((part, i) => ({ ...part, amount: amounts[i] })) };
+  };
+  if (parts.length < 2 || parts.length > MAX_SPLIT_PARTS) {
+    issues.push(issue<SplitValues>("parts", `Se puede dividir en 2 a ${MAX_SPLIT_PARTS} partes.`));
+    return issues;
+  }
+  if (remaining < parts.length) {
+    issues.push(issue<SplitValues>("parts", "Lo que falta pagar es muy poco para dividirlo."));
+    return issues;
+  }
+  if (parts.some((part) => part.amount === null || !Number.isInteger(part.amount) || part.amount <= 0)) {
+    issues.push(issue<SplitValues>("parts", "Cada parte tiene que tener un monto.", [{ label: "Repartir en partes iguales", patch: evenly(parts.length) }]));
+  } else {
+    const sum = parts.reduce((total, part) => total + (part.amount ?? 0), 0);
+    if (sum !== remaining) {
+      const diff = remaining - sum;
+      issues.push(
+        issue<SplitValues>(
+          "parts",
+          `Las partes suman ${formatMoney(sum, currency)} y falta pagar ${formatMoney(remaining, currency)} (${diff > 0 ? "faltan" : "sobran"} ${formatMoney(Math.abs(diff), currency)}).`,
+          [{ label: "Repartir en partes iguales", patch: evenly(parts.length) }],
+        ),
+      );
+    }
+  }
+  if (parts.some((part) => !part.dueDate)) {
+    issues.push(issue<SplitValues>("parts", "Elegí cuándo vence cada parte."));
+  } else if (parts.some((part, i) => i > 0 && part.dueDate < parts[i - 1].dueDate)) {
+    issues.push(
+      issue<SplitValues>("parts", "Las fechas tienen que ir en orden: cada parte vence después de la anterior.", [
+        { label: "Ordenar por fecha", patch: { parts: [...parts].sort((a, b) => a.dueDate.localeCompare(b.dueDate)) } },
+      ]),
+    );
+  }
+  return issues;
+}
+
+// ── Memberships: changing the billing day ───────────────────────────────
+
+export type ReanchorValues = { newStart: string };
+
+/**
+ * A new billing day starts a new period. It can't be in the past, and it
+ * can't start before the period already billed ends (that would charge the
+ * same days twice).
+ */
+export function reanchorIssues(values: ReanchorValues, { today, billedUntil }: { today: string; billedUntil: string | null }): Issue<ReanchorValues>[] {
+  if (!values.newStart) return [issue<ReanchorValues>("newStart", "Elegí desde qué día cobra.")];
+  if (values.newStart < today) return [issue<ReanchorValues>("newStart", "Tiene que ser hoy o más adelante.", [{ label: "Desde hoy", patch: { newStart: today } }])];
+  if (billedUntil && values.newStart < billedUntil) {
+    return [
+      issue<ReanchorValues>("newStart", "Ese día ya está cubierto por la cuota actual: le cobrarías dos veces los mismos días.", [
+        { label: "Cuando termina la cuota actual", patch: { newStart: billedUntil } },
+      ]),
+    ];
+  }
+  return [];
+}
+
 /** Applies a fix to the current values (used by the wizards' fix buttons). */
 export function applyFix<T>(values: T, fix: Fix<T>): T {
   return { ...values, ...fix.patch };

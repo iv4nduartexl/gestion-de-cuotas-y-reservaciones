@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { AddHolidaysButton } from "@/components/blocked-slots/add-holidays-button";
+import { updateBlockedSlotAction } from "@/app/dashboard/schedule/actions";
 import { BlockedSlotForm } from "@/components/blocked-slots/blocked-slot-form";
 import { BlockedSlotList } from "@/components/blocked-slots/blocked-slot-list";
 import { ListSkeleton } from "@/components/dashboard/list-skeleton";
@@ -23,7 +24,7 @@ import { vocabularyFor } from "@/lib/business-types";
 import { getWeeklySchedule } from "@/lib/data/availability";
 import { listUpcomingBlockedSlots } from "@/lib/data/blocked-slots";
 import { getStaffForMember, listStaff } from "@/lib/data/staff";
-import { todayInZone } from "@/lib/datetime";
+import { addDaysToDate, formatInZone, todayInZone } from "@/lib/datetime";
 import { can, getTenantContextOrRedirect } from "@/lib/tenant";
 import { timeZoneLabel } from "@/lib/timezones";
 import { describeSchedule, fromRules } from "@/lib/schedule-wizard";
@@ -158,6 +159,8 @@ async function Schedule({ searchParams }: { searchParams: PageProps<"/dashboard/
           canBlock={canBlock}
           staffOptions={isMember ? [{ id: person.id, name: person.name }] : people.map(({ id, name }) => ({ id, name }))}
           today={today}
+          baseHref={hrefFor({ tab: "dias-libres" })}
+          editingId={typeof params.libre === "string" ? params.libre : null}
         />
       )}
     </>
@@ -261,6 +264,8 @@ async function DaysOffTab({
   canBlock,
   staffOptions,
   today,
+  baseHref,
+  editingId,
 }: {
   ctx: Awaited<ReturnType<typeof getTenantContextOrRedirect>>;
   personId: string;
@@ -271,10 +276,33 @@ async function DaysOffTab({
   canBlock: boolean;
   staffOptions: { id: string; name: string }[];
   today: string;
+  baseHref: string;
+  editingId: string | null;
 }) {
   // Solo mode: all blocks belong to the business. Team: this person's + business-wide.
   const slots = await listUpcomingBlockedSlots(ctx, isTeam ? { staffId: personId } : {});
   const canDeleteAny = can(ctx, { blockedSlot: ["delete"] });
+  const canManage = (slot: (typeof slots)[number]) =>
+    isMember ? slot.staffId !== null && slot.staffId === personId && isOwnRecord : canDeleteAny;
+  const editing = slots.find((slot) => slot.id === editingId && canManage(slot));
+  const tz = ctx.settings.timezone;
+  const withLibre = (id: string) => `${baseHref}${baseHref.includes("?") ? "&" : "?"}libre=${id}`;
+  const editingValues = editing && (() => {
+    const startTime = formatInZone(editing.startsAt, tz, "HH:mm");
+    const endTime = formatInZone(editing.endsAt, tz, "HH:mm");
+    const allDay = startTime === "00:00" && endTime === "00:00";
+    const endDay = formatInZone(editing.endsAt, tz, "yyyy-MM-dd");
+    return {
+      action: updateBlockedSlotAction.bind(null, editing.id),
+      allDay,
+      startDate: formatInZone(editing.startsAt, tz, "yyyy-MM-dd"),
+      endDate: allDay ? addDaysToDate(endDay, -1) : endDay,
+      startTime: allDay ? "08:00" : startTime,
+      endTime: allDay ? "12:00" : endTime,
+      reason: editing.reason,
+      cancelHref: baseHref,
+    };
+  })();
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -297,11 +325,23 @@ async function DaysOffTab({
           slots={slots}
           timeZone={ctx.settings.timezone}
           showWho={isTeam}
-          canDelete={(slot) => (isMember ? slot.staffId !== null && slot.staffId === personId && isOwnRecord : canDeleteAny)}
+          canDelete={canManage}
+          editHref={(slot) => withLibre(slot.id)}
         />
       </SectionCard>
 
-      {canBlock && (
+      {editingValues ? (
+        <SectionCard title="Editar día libre" description="Cambiá las fechas, las horas o el motivo.">
+          <BlockedSlotForm
+            key={editing!.id}
+            staffOptions={staffOptions}
+            allowBusinessWide={!isMember}
+            showStaffPicker={false}
+            today={today}
+            editing={editingValues}
+          />
+        </SectionCard>
+      ) : canBlock && (
         <SectionCard title="Agregar día libre" description="Vacaciones, un trámite, un feriado… Nadie va a poder reservar en ese rango.">
           <BlockedSlotForm
             staffOptions={staffOptions}

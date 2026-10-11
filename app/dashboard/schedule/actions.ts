@@ -9,6 +9,7 @@ import {
   createMissingBusinessWideBlocks,
   deleteBlockedSlot,
   getBlockedSlot,
+  updateBlockedSlot,
 } from "@/lib/data/blocked-slots";
 import { InvalidReferenceError } from "@/lib/data/scope";
 import { getStaffForMember } from "@/lib/data/staff";
@@ -86,6 +87,24 @@ export async function createBlockedSlotAction(
   }
   refresh();
   return { message: "Día libre agregado" };
+}
+
+/** "Editar" a día libre: new dates, hours or reason. */
+export async function updateBlockedSlotAction(blockedSlotId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  const ctx = await authorizeAction({ blockedSlot: ["delete"] }, APPOINTMENTS);
+  const id = parseId(blockedSlotId);
+  if (!ctx || !id) return FORBIDDEN;
+  const slot = await getBlockedSlot(ctx, id);
+  if (!slot || !(await memberMayManage(ctx, slot.staffId))) return FORBIDDEN;
+  // Who it is for doesn't change here (remove it and add another for that).
+  formData.set("staffId", slot.staffId ?? "");
+  const parsed = parseForm(blockedSlotSchema, formData);
+  if (!parsed.success) return { errors: parsed.errors };
+  const { startsAt, endsAt } = toInstantRange(parsed.data, ctx.settings.timezone);
+  if (endsAt <= startsAt) return { errors: { endTime: "La hora de fin debe ser posterior a la de inicio." } };
+  await updateBlockedSlot(ctx, id, { startsAt, endsAt, reason: parsed.data.reason });
+  refresh();
+  return { message: "Día libre actualizado" };
 }
 
 export async function deleteBlockedSlotAction(blockedSlotId: string) {

@@ -163,6 +163,16 @@ test("Nuevo turno asks turno or rental, then books a rental with a new client an
   await expect(page.getByText("Alquiler agendado")).toBeVisible();
   await expect(page.getByText("Marta Mostrador").first()).toBeVisible();
   await expect(page.getByText(/550\.000/).first()).toBeVisible();
+
+  // Two more nights: the dates change and the price can stay as agreed.
+  await page.getByRole("link", { name: "Cambiar entrada" }).click();
+  await pickCalendarDate(page.getByRole("region", { name: /¿Qué día llegás\?/ }), plusDays(40));
+  await pickCalendarDate(page.getByRole("region", { name: /¿Qué día te vas\?/ }), plusDays(44));
+  await page.getByRole("radio", { name: /Mantener Gs\.\s550\.000/ }).click();
+  await page.getByRole("button", { name: "Guardar cambio" }).click();
+  await expect(page.getByText("Cambios guardados")).toBeVisible();
+  await expect(page.getByText("4 noches").filter({ visible: true })).toBeVisible();
+  await expect(page.getByText(/550\.000/).filter({ visible: true }).first()).toBeVisible();
 });
 
 test("a plan with a custom period, paid at the end", async ({ page }) => {

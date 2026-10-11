@@ -105,6 +105,29 @@ test("partial then full payment, with live summary and WhatsApp reminder", async
   chargeUrl = page.url();
 });
 
+test("give more time to pay, then split what's left", async ({ page }) => {
+  await page.goto("/dashboard/cuotas?filtro=vencidas");
+  const row = page.getByRole("listitem").filter({ hasText: "Socio Uno" }).first();
+  await row.getByRole("link", { name: /Ver cuota de Socio Uno/ }).click();
+  await expect(page.getByText("Vencida", { exact: true }).first()).toBeVisible();
+
+  await page.getByRole("link", { name: "Darle más tiempo" }).click();
+  await page.getByRole("radio", { name: "+15 días" }).click();
+  await page.getByRole("button", { name: "Guardar cambio" }).click();
+  await expect(page.getByText("Cuota actualizada")).toBeVisible();
+  await expect(page.getByText("Vencida", { exact: true }).filter({ visible: true })).toHaveCount(0);
+
+  await page.getByRole("link", { name: "Dividir en partes" }).click();
+  await expect(page.getByText(/Suman Gs\.\s150\.000 de Gs\.\s150\.000/)).toBeVisible();
+  // Unbalanced on purpose: blocked, with a one-tap fix.
+  await page.getByLabel("Monto de la parte 1").fill("10000");
+  await expect(page.getByRole("button", { name: "Dividir en 2 partes" })).toBeDisabled();
+  await page.getByRole("button", { name: "Repartir en partes iguales" }).click();
+  await page.getByRole("button", { name: "Dividir en 2 partes" }).click();
+  await expect(page.getByText("Cuota dividida en partes")).toBeVisible();
+  await expect(page.getByText(/Gs\.\s75\.000/).filter({ visible: true }).first()).toBeVisible();
+});
+
 test("Nuevo cobro: a new client and a one-off charge, then it's paid", async ({ page }) => {
   await page.goto("/dashboard/cuotas");
   await page.getByRole("link", { name: "Nuevo cobro" }).click();

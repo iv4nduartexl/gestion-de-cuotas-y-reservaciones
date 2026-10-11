@@ -1,4 +1,4 @@
-import { CalendarIcon, ClockIcon, GlobeIcon, MessageSquareIcon, ScissorsIcon, UserRoundIcon } from "lucide-react";
+import { CalendarIcon, ClockIcon, GlobeIcon, MessageSquareIcon, ScissorsIcon, UserRoundIcon, WalletIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -9,11 +9,12 @@ import { StatusActions } from "@/components/agenda/status-actions";
 import { WhatsAppButton } from "@/components/clients/whatsapp-button";
 import { ListSkeleton } from "@/components/dashboard/list-skeleton";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { EntityAvatar } from "@/components/ui-kit/entity-avatar";
 import { PageHeader } from "@/components/ui-kit/page-header";
 import { SectionCard } from "@/components/ui-kit/section-card";
 import { parseId, requireProduct } from "@/lib/actions";
-import { STATUS_BADGE, STATUS_LABELS } from "@/lib/appointment-status";
+import { ACTIVE_STATUSES, STATUS_BADGE, STATUS_LABELS } from "@/lib/appointment-status";
 import { getAppointment } from "@/lib/data/appointments";
 import { getStaffForMember } from "@/lib/data/staff";
 import { stayUnits } from "@/lib/stays";
@@ -46,19 +47,26 @@ async function AppointmentDetail({ params }: { params: PageProps<"/dashboard/age
   const backHref = date === todayInZone(tz) ? "/dashboard/agenda" : `/dashboard/agenda?fecha=${date}`;
 
   const isStay = turno.kind === "stay";
+  const active = (ACTIVE_STATUSES as readonly string[]).includes(turno.status);
+  const editHref = (que: string) => `/dashboard/agenda/${turno.id}/editar?que=${que}`;
+  // Members don't manage rentals (no staff); moving needs an active turno.
+  const canMove = canManage && active && !(isStay && ctx.role === "member");
+  const canReprice = canManage && turno.status !== "cancelled";
   const nights = isStay ? stayUnits("night", date, formatInZone(turno.endsAt, tz, "yyyy-MM-dd")) : 0;
-  const rows: { icon: React.ReactNode; label: string; value: React.ReactNode }[] = isStay
+  const rows: { icon: React.ReactNode; label: string; value: React.ReactNode; edit?: string }[] = isStay
     ? [
-        { icon: <CalendarIcon />, label: "Entrada", value: <span className="inline-block tabular first-letter:uppercase">{formatInZone(turno.startsAt, tz, "EEEE d 'de' MMMM · HH:mm")}</span> },
+        { icon: <CalendarIcon />, label: "Entrada", value: <span className="inline-block tabular first-letter:uppercase">{formatInZone(turno.startsAt, tz, "EEEE d 'de' MMMM · HH:mm")}</span>, edit: canMove ? editHref("fechas") : undefined },
         { icon: <CalendarIcon />, label: "Salida", value: <span className="inline-block tabular first-letter:uppercase">{formatInZone(turno.endsAt, tz, "EEEE d 'de' MMMM · HH:mm")}</span> },
         { icon: <ClockIcon />, label: "Estadía", value: `${nights} ${nights === 1 ? "noche" : "noches"}` },
-        { icon: <ScissorsIcon />, label: "Alquiler", value: `${turno.serviceName} · ${formatMoney(turno.price, turno.currency)}` },
+        { icon: <ScissorsIcon />, label: "Alquiler", value: turno.serviceName },
+        { icon: <WalletIcon />, label: "Precio", value: formatMoney(turno.price, turno.currency), edit: canReprice ? editHref("precio") : undefined },
       ]
     : [
-        { icon: <CalendarIcon />, label: "Día", value: <span className="inline-block first-letter:uppercase">{formatInZone(turno.startsAt, tz, "EEEE d 'de' MMMM yyyy")}</span> },
+        { icon: <CalendarIcon />, label: "Día", value: <span className="inline-block first-letter:uppercase">{formatInZone(turno.startsAt, tz, "EEEE d 'de' MMMM yyyy")}</span>, edit: canMove ? editHref("horario") : undefined },
         { icon: <ClockIcon />, label: "Hora", value: <span className="tabular">{formatInZone(turno.startsAt, tz, "HH:mm")} a {formatInZone(turno.endsAt, tz, "HH:mm")}</span> },
-        { icon: <ScissorsIcon />, label: "Servicio", value: `${turno.serviceName} · ${formatMoney(turno.price, turno.currency)}` },
-        ...(ctx.settings.teamMode === "team" ? [{ icon: <UserRoundIcon />, label: "Con", value: turno.staffName }] : []),
+        { icon: <ScissorsIcon />, label: "Servicio", value: turno.serviceName, edit: canMove ? editHref("horario") : undefined },
+        { icon: <WalletIcon />, label: "Precio", value: formatMoney(turno.price, turno.currency), edit: canReprice ? editHref("precio") : undefined },
+        ...(ctx.settings.teamMode === "team" ? [{ icon: <UserRoundIcon />, label: "Con", value: turno.staffName, edit: canMove ? editHref("horario") : undefined }] : []),
       ];
   rows.push({
     icon: <GlobeIcon />,
@@ -89,10 +97,15 @@ async function AppointmentDetail({ params }: { params: PageProps<"/dashboard/age
                   <span className="mt-0.5 text-primary [&_svg]:size-5" aria-hidden="true">
                     {row.icon}
                   </span>
-                  <div className="flex flex-col">
+                  <div className="flex flex-1 flex-col">
                     <dt className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{row.label}</dt>
                     <dd className="font-semibold">{row.value}</dd>
                   </div>
+                  {row.edit && (
+                    <Link href={row.edit} className="text-sm font-semibold text-primary hover:underline" aria-label={`Cambiar ${row.label.toLowerCase()}`}>
+                      Cambiar
+                    </Link>
+                  )}
                 </div>
               ))}
               {turno.notes && (
@@ -133,7 +146,14 @@ async function AppointmentDetail({ params }: { params: PageProps<"/dashboard/age
               Reservó online como <strong>“{turno.bookedName}”</strong>, con el teléfono de {turno.clientName}. Confirmá con quién es el turno.
             </p>
           )}
-          <WhatsAppButton phone={turno.clientPhone} name={turno.clientName} withLabel className="w-fit" />
+          <div className="flex flex-wrap items-center gap-2">
+            <WhatsAppButton phone={turno.clientPhone} name={turno.clientName} withLabel className="w-fit" />
+            {canManage && turno.status !== "cancelled" && (
+              <Link href={editHref("cliente")} className={buttonVariants({ variant: "ghost" })}>
+                Cambiar cliente
+              </Link>
+            )}
+          </div>
         </SectionCard>
       </div>
     </>

@@ -205,9 +205,27 @@ test("the owner books a walk-in from the dashboard", async ({ browser }) => {
   await expect(page.getByRole("heading", { name: "Turno de Cliente Mostrador" })).toBeVisible();
   await expect(page.getByText("Agendado desde el panel")).toBeVisible();
   await expect(page.getByText("Turno agendado")).toBeVisible();
+  const turnoUrl = page.url().replace(/\?.*$/, "");
+
+  // Move it: the current time is marked; pick another free one.
+  const hour = () => page.getByText(/ a \d\d:\d\d$/).filter({ visible: true }).first();
+  const before = await hour().textContent();
+  await page.getByRole("link", { name: "Cambiar día" }).click();
+  await expect(page.getByRole("heading", { name: "Cambiar día y hora" })).toBeVisible();
+  await expect(page.locator('button[aria-pressed="true"]').filter({ visible: true })).toHaveCount(1);
+  await page.locator('button[aria-pressed="false"]').filter({ visible: true }).last().click();
+  await page.getByRole("button", { name: "Guardar cambio" }).click();
+  await expect(page.getByText("Cambios guardados")).toBeVisible();
+  await expect(hour()).not.toHaveText(before!);
+
+  // A discount on this turno.
+  await page.getByRole("link", { name: "Cambiar precio" }).click();
+  await page.getByLabel("Precio", { exact: true }).fill("40000");
+  await page.getByRole("button", { name: "Guardar cambio" }).click();
+  await expect(page.getByText("Cambios guardados")).toBeVisible();
+  await expect(page.getByText(/Gs\.\s40\.000/).filter({ visible: true })).toBeVisible();
 
   // Another business can't open it.
-  const turnoUrl = page.url().replace(/\?.*$/, "");
   const other = await browser.newContext({ storageState: USERS.a.storageState });
   const otherPage = await other.newPage();
   await otherPage.goto(turnoUrl);

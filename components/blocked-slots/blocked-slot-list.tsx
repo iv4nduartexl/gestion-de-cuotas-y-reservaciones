@@ -1,8 +1,10 @@
 import { CalendarOffIcon } from "lucide-react";
+import Link from "next/link";
 
 import { deleteBlockedSlotAction } from "@/app/dashboard/schedule/actions";
 import { ConfirmActionButton } from "@/components/forms/confirm-action-button";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { addDaysToDate, formatCalendarDate, formatInZone } from "@/lib/datetime";
 
 type Slot = {
@@ -45,11 +47,14 @@ export function BlockedSlotList({
   timeZone,
   canDelete,
   showWho,
+  editHref,
 }: {
   slots: Slot[];
   timeZone: string;
   canDelete: (slot: Slot) => boolean;
   showWho: boolean;
+  /** Where "Editar" goes (only for slots the user can manage). */
+  editHref?: (slot: Slot) => string;
 }) {
   if (slots.length === 0) {
     return (
@@ -81,6 +86,11 @@ export function BlockedSlotList({
                 {slot.reason}
               </span>
             </div>
+            {canDelete(slot) && editHref && (
+              <Link href={editHref(slot)} className={buttonVariants({ variant: "ghost", size: "sm" })} aria-label={`Editar día libre ${range.text}`}>
+                Editar
+              </Link>
+            )}
             {canDelete(slot) && (
               <ConfirmActionButton
                 action={deleteBlockedSlotAction.bind(null, slot.id)}

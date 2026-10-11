@@ -19,6 +19,7 @@ type Enrollment = {
   id: string;
   status: EnrollmentStatus;
   startDate: string;
+  memberSince?: string | null;
   price: number;
   currency: string;
   planName: string;
@@ -77,7 +78,7 @@ export function MembershipSection({
                 <span className="font-bold">{enrollment.planName}</span>
                 <span className="text-sm text-muted-foreground tabular">
                   {formatMoney(enrollment.price, enrollment.currency)} {intervalLabel(enrollment.intervalUnit, enrollment.intervalCount)} · desde{" "}
-                  {formatCalendarDate(enrollment.startDate, "dd/MM/yyyy")} ·{" "}
+                  {formatCalendarDate(enrollment.memberSince ?? enrollment.startDate, "dd/MM/yyyy")} ·{" "}
                   {enrollment.billingTiming === "arrears" ? "paga a período vencido" : "paga por adelantado"}
                 </span>
               </span>
@@ -85,7 +86,14 @@ export function MembershipSection({
                 {ENROLLMENT_STATUS_LABELS[enrollment.status]}
               </Badge>
               {canManage && enrollment.status !== "cancelled" && (
-                <div className="flex gap-1">
+                <div className="flex flex-wrap gap-1">
+                  <Link
+                    href={`/dashboard/clients/${clientId}/membresia/${enrollment.id}`}
+                    className={buttonVariants({ variant: "ghost", size: "sm" })}
+                    aria-label={`Cambiar membresía ${enrollment.planName}`}
+                  >
+                    Cambiar
+                  </Link>
                   {enrollment.status === "active" ? (
                     <ConfirmActionButton
                       action={changeEnrollmentAction.bind(null, enrollment.id, "pause")}

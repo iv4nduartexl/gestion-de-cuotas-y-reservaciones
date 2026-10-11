@@ -159,9 +159,13 @@ export async function expectTime(picker: Locator, time: string) {
 export async function pickCalendarDate(scope: Locator | Page, date: string) {
   const [y, m, d] = date.split("-").map(Number);
   const month = new Intl.DateTimeFormat("es-PY", { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, 1)));
-  const day = scope.getByRole("button", { name: new RegExp(`(^|, )${d} de ${month} de ${y}`) });
+  // Visible only: pages kept alive in the background (<Activity>) hold hidden copies.
+  const nextMonth = scope.getByRole("button", { name: /mes siguiente/i }).filter({ visible: true });
+  // The calendar may still be loading its taken dates.
+  await expect(nextMonth.first()).toBeVisible();
+  const day = scope.getByRole("button", { name: new RegExp(`(^|, )${d} de ${month} de ${y}`) }).filter({ visible: true });
   for (let i = 0; i < 12 && (await day.count()) === 0; i++) {
-    await scope.getByRole("button", { name: /mes siguiente/i }).click();
+    await nextMonth.first().click();
   }
   await day.click();
 }

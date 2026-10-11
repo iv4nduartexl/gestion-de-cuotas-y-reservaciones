@@ -3,8 +3,9 @@ import "server-only";
 import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, or, sql, sum, type SQL } from "drizzle-orm";
 
 import { db, type Executor } from "@/db";
-import { charges, clients, enrollments, payments, plans } from "@/db/schema";
+import { charges, clients, enrollments, payments, plans, reminders } from "@/db/schema";
 import { addDays, chargeStatus, overdueCutoff, periodsFor, type DerivedChargeStatus, type Grace } from "@/lib/billing";
+import { chargeAmountIssues, splitIssues, type SplitPart } from "@/lib/config-rules";
 import { zonedToUtc } from "@/lib/datetime";
 import type { PaymentMethod } from "@/lib/membership-constants";
 import { InvalidReferenceError, likePattern, PAGE_SIZE, type TenantScope } from "./scope";
@@ -13,7 +14,7 @@ import { InvalidReferenceError, likePattern, PAGE_SIZE, type TenantScope } from 
 export const GENERATE_AHEAD_DAYS = 7;
 
 export class PaymentError extends Error {
-  constructor(public reason: "not_found" | "closed" | "overpaid" | "has_payments") {
+  constructor(public reason: "not_found" | "closed" | "overpaid" | "has_payments" | "invalid") {
     super(`Payment rejected: ${reason}`);
     this.name = "PaymentError";
   }
@@ -34,7 +35,7 @@ export function graceOf(settings: Pick<TenantScope["settings"], "graceCount" | "
  */
 export async function syncCharges(
   ctx: TenantScope,
-  { today, enrollmentId }: { today: string; enrollmentId?: string },
+  { today, enrollmentId, until: untilOverride }: { today: string; enrollmentId?: string; /** Generate dues up to this date instead. */ until?: string },
   exec: Executor = db,
 ) {
   const rows = await exec
@@ -60,7 +61,7 @@ export async function syncCharges(
       ),
     );
 
-  const until = addDays(today, GENERATE_AHEAD_DAYS);
+  const until = untilOverride ?? addDays(today, GENERATE_AHEAD_DAYS);
   const values = rows.flatMap((enrollment) =>
     periodsFor({
       startDate: enrollment.startDate,
@@ -368,4 +369,128 @@ export async function pendingByClient(ctx: TenantScope, clientIds: string[], tod
   if (clientIds.length === 0) return [];
   const rows = await joined().where(scoped(ctx, inArray(charges.clientId, clientIds), eq(charges.status, "pending"), lte(charges.dueDate, today)));
   return rows.map(withStatus(ctx, today));
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** Locks a pending charge of this business and returns it with what was paid. */
+async function lockPending(tx: Tx, ctx: TenantScope, id: string) {
+  const [charge] = await tx.select().from(charges).where(scoped(ctx, eq(charges.id, id))).for("update");
+  if (!charge) throw new PaymentError("not_found");
+  if (charge.status !== "pending") throw new PaymentError("closed");
+  const [{ paid }] = await tx
+    .select({ paid: sql<number>`coalesce(sum(${payments.amount}), 0)::int` })
+    .from(payments)
+    .where(eq(payments.chargeId, charge.id));
+  return { charge, paid };
+}
+
+/** Reminders planned (or sent) for the old due date or amount no longer apply. */
+async function resetChargeReminders(tx: Tx, chargeId: string) {
+  await tx.delete(reminders).where(eq(reminders.chargeId, chargeId));
+}
+
+/** "Darle más tiempo": a new due date for a pending cuota. */
+export async function moveDueDate(ctx: TenantScope, id: string, dueDate: string) {
+  return db.transaction(async (tx) => {
+    const { charge } = await lockPending(tx, ctx, id);
+    await tx.update(charges).set({ dueDate }).where(eq(charges.id, id));
+    await resetChargeReminders(tx, id);
+    return { before: charge.dueDate };
+  });
+}
+
+/** A new total (discount, surcharge). Never below what was paid; equal to it closes the cuota. */
+export async function changeChargeAmount(ctx: TenantScope, id: string, amount: number) {
+  return db.transaction(async (tx) => {
+    const { charge, paid } = await lockPending(tx, ctx, id);
+    if (chargeAmountIssues({ amount }, { paid, currency: charge.currency }).length > 0) throw new PaymentError("invalid");
+    const fullyPaid = amount === paid;
+    await tx
+      .update(charges)
+      .set({ amount, ...(fullyPaid && { status: "paid" as const, paidAt: new Date() }) })
+      .where(eq(charges.id, id));
+    await resetChargeReminders(tx, id);
+    return { before: charge.amount, fullyPaid };
+  });
+}
+
+/**
+ * Splits what's left of a cuota into parts. The cuota keeps the first part
+ * (plus whatever was already paid); the others become linked charges of kind
+ * "part" with their own due dates.
+ */
+export async function splitCharge(ctx: TenantScope, id: string, parts: SplitPart[], label: string) {
+  return db.transaction(async (tx) => {
+    const { charge, paid } = await lockPending(tx, ctx, id);
+    const remaining = charge.amount - paid;
+    if (splitIssues({ parts }, { remaining, currency: charge.currency }).length > 0) throw new PaymentError("invalid");
+    const [first, ...rest] = parts as { amount: number; dueDate: string }[];
+    await tx.update(charges).set({ amount: paid + first.amount, dueDate: first.dueDate }).where(eq(charges.id, id));
+    const created = await tx
+      .insert(charges)
+      .values(
+        rest.map((part, i) => ({
+          organizationId: ctx.organization.id,
+          kind: "part" as const,
+          enrollmentId: charge.enrollmentId,
+          clientId: charge.clientId,
+          concept: `${label} · parte ${i + 2} de ${parts.length}`,
+          parentChargeId: charge.id,
+          dueDate: part.dueDate,
+          amount: part.amount,
+          currency: charge.currency,
+        })),
+      )
+      .returning({ id: charges.id });
+    await resetChargeReminders(tx, id);
+    return { createdIds: created.map((row) => row.id) };
+  });
+}
+
+/**
+ * Fixes a payment (amount, method, date, reference). The cuota can't end up
+ * overpaid, and it opens or closes according to the new total paid.
+ */
+export async function updatePayment(
+  ctx: TenantScope,
+  paymentId: string,
+  input: { amount: number; method: PaymentMethod; paidOn: string; reference: string | null },
+) {
+  return db.transaction(async (tx) => {
+    const [payment] = await tx
+      .select()
+      .from(payments)
+      .where(and(eq(payments.organizationId, ctx.organization.id), eq(payments.id, paymentId)));
+    if (!payment) throw new PaymentError("not_found");
+    // Online payments come from the provider: they can be undone, not edited.
+    if (payment.provider) throw new PaymentError("closed");
+    const [charge] = await tx.select().from(charges).where(eq(charges.id, payment.chargeId)).for("update");
+    if (!charge || charge.status === "void") throw new PaymentError("closed");
+    const [{ others }] = await tx
+      .select({ others: sql<number>`coalesce(sum(${payments.amount}), 0)::int` })
+      .from(payments)
+      .where(and(eq(payments.chargeId, charge.id), sql`${payments.id} <> ${payment.id}`));
+    if (others + input.amount > charge.amount) throw new PaymentError("overpaid");
+
+    const paidAt = zonedToUtc(input.paidOn, "12:00", ctx.settings.timezone);
+    await tx
+      .update(payments)
+      .set({ amount: input.amount, method: input.method, paidAt, reference: input.reference })
+      .where(eq(payments.id, payment.id));
+    const fullyPaid = others + input.amount === charge.amount;
+    await tx
+      .update(charges)
+      .set(fullyPaid ? { status: "paid", paidAt: charge.paidAt ?? paidAt } : { status: "pending", paidAt: null })
+      .where(eq(charges.id, charge.id));
+    return { before: { amount: payment.amount, method: payment.method }, chargeId: charge.id, fullyPaid };
+  });
+}
+
+export async function getPayment(ctx: TenantScope, paymentId: string) {
+  const [row] = await db
+    .select()
+    .from(payments)
+    .where(and(eq(payments.organizationId, ctx.organization.id), eq(payments.id, paymentId)));
+  return row ?? null;
 }

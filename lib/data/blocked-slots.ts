@@ -62,6 +62,16 @@ export async function createBlockedSlot(
   return row;
 }
 
+/** Changes the dates, hours or reason of a día libre (who it is for stays). */
+export async function updateBlockedSlot(ctx: TenantScope, id: string, input: { startsAt: Date; endsAt: Date; reason: string | null }) {
+  const rows = await db
+    .update(blockedSlots)
+    .set(input)
+    .where(scoped(ctx, eq(blockedSlots.id, id)))
+    .returning({ id: blockedSlots.id });
+  if (rows.length === 0) throw new InvalidReferenceError("id");
+}
+
 export async function deleteBlockedSlot(ctx: TenantScope, id: string) {
   const rows = await db
     .delete(blockedSlots)

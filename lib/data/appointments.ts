@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, gt, gte, inArray, lt, ne, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, ne, type SQL } from "drizzle-orm";
 
 import { db } from "@/db";
 import { appointments, clients, services, staff } from "@/db/schema";
@@ -204,6 +204,46 @@ export async function updateInternalNotes(ctx: TenantScope, id: string, internal
     .where(scoped(ctx, eq(appointments.id, id)))
     .returning({ id: appointments.id });
   return rows.length > 0;
+}
+
+/**
+ * What was charged for this turno or rental (a discount, an extra). Also for
+ * attended ones; not for cancelled ones. Returns the old price, or null.
+ */
+export async function updateAppointmentPrice(ctx: TenantScope, id: string, price: number) {
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select({ price: appointments.price })
+      .from(appointments)
+      .where(scoped(ctx, eq(appointments.id, id), ne(appointments.status, "cancelled")))
+      .for("update");
+    if (!current) return null;
+    await tx.update(appointments).set({ price }).where(eq(appointments.id, id));
+    return { before: current.price };
+  });
+}
+
+/**
+ * Moves the turno to another client of the business (booked under the wrong
+ * person). Returns the previous client id, or null.
+ */
+export async function changeAppointmentClient(ctx: TenantScope, id: string, clientId: string) {
+  return db.transaction(async (tx) => {
+    const [client] = await tx
+      .select({ id: clients.id })
+      .from(clients)
+      .where(and(eq(clients.organizationId, ctx.organization.id), eq(clients.id, clientId), isNull(clients.archivedAt)));
+    if (!client) return null;
+    const [current] = await tx
+      .select({ clientId: appointments.clientId })
+      .from(appointments)
+      .where(scoped(ctx, eq(appointments.id, id)))
+      .for("update");
+    if (!current) return null;
+    // The "booked as" warning no longer applies once someone checked it.
+    await tx.update(appointments).set({ clientId: client.id, bookedName: null }).where(eq(appointments.id, id));
+    return { before: current.clientId };
+  });
 }
 
 /** The turno behind a client's private link (looked up by token hash). */

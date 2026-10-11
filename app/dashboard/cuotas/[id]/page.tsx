@@ -5,6 +5,7 @@ import { Suspense } from "react";
 
 import { deletePaymentAction, voidChargeAction } from "@/app/dashboard/cuotas/actions";
 import { ListSkeleton } from "@/components/dashboard/list-skeleton";
+import { buttonVariants } from "@/components/ui/button";
 import { ConfirmActionButton } from "@/components/forms/confirm-action-button";
 import { ChargeBadge } from "@/components/memberships/charge-badge";
 import { PaymentDialog } from "@/components/memberships/payment-dialog";
@@ -44,14 +45,20 @@ async function ChargeDetail({ params }: { params: PageProps<"/dashboard/cuotas/[
   const open = charge.derived === "pendiente" || charge.derived === "parcial" || charge.derived === "vencida";
   const canUndo = can(ctx, { payment: ["delete"] });
   const canVoid = can(ctx, { payment: ["void"] }) && open && charge.amountPaid === 0;
+  const canChange = can(ctx, { enrollment: ["update"] }) && charge.status === "pending";
+  const canFixPayments = can(ctx, { payment: ["delete"] }) && charge.status !== "void";
+  const editHref = (que: string) => `/dashboard/cuotas/${charge.id}/editar?que=${que}`;
 
-  const rows: [string, React.ReactNode][] = [
+  const rows: [string, React.ReactNode, string?][] = [
     [charge.kind === "cuota" ? "Plan" : "Concepto", charge.planName],
+    ...(charge.parentChargeId
+      ? ([["Viene de", <Link key="p" href={`/dashboard/cuotas/${charge.parentChargeId}`} className="text-primary hover:underline">la cuota original</Link>]] as [string, React.ReactNode][])
+      : []),
     ...(charge.periodStart && charge.periodEnd
       ? ([["Período", `${date(charge.periodStart)} al ${date(addDays(charge.periodEnd, -1))}`]] as [string, React.ReactNode][])
       : []),
-    ["Vence", date(charge.dueDate)],
-    ["Monto", money(charge.amount)],
+    ["Vence", date(charge.dueDate), canChange ? editHref("vence") : undefined],
+    ["Monto", money(charge.amount), canChange ? editHref("monto") : undefined],
     ["Pagado", money(charge.amountPaid)],
     ...(open ? ([["Falta", <strong key="r" className="text-coral-foreground">{money(charge.remaining)}</strong>]] as [string, React.ReactNode][]) : []),
   ];
@@ -68,10 +75,17 @@ async function ChargeDetail({ params }: { params: PageProps<"/dashboard/cuotas/[
         <div className="flex flex-col gap-6">
           <SectionCard title="Detalle">
             <dl className="grid gap-3 sm:grid-cols-[10rem_1fr]">
-              {rows.map(([label, value]) => (
+              {rows.map(([label, value, edit]) => (
                 <div key={label} className="contents">
                   <dt className="text-sm font-semibold text-muted-foreground">{label}</dt>
-                  <dd className="font-semibold tabular">{value}</dd>
+                  <dd className="flex items-center justify-between gap-3 font-semibold tabular">
+                    {value}
+                    {edit && (
+                      <Link href={edit} className="text-sm font-semibold text-primary hover:underline" aria-label={`Cambiar ${label.toLowerCase()}`}>
+                        Cambiar
+                      </Link>
+                    )}
+                  </dd>
                 </div>
               ))}
             </dl>
@@ -90,6 +104,16 @@ async function ChargeDetail({ params }: { params: PageProps<"/dashboard/cuotas/[
                   />
                 )}
                 <ReminderLink charge={charge} template={ctx.settings.paymentReminderTemplate} withLabel />
+                {canChange && (
+                  <Link href={editHref("vence")} className={buttonVariants({ variant: "outline" })}>
+                    Darle más tiempo
+                  </Link>
+                )}
+                {canChange && charge.remaining >= 2 && (
+                  <Link href={editHref("dividir")} className={buttonVariants({ variant: "ghost" })}>
+                    Dividir en partes
+                  </Link>
+                )}
                 {canVoid && (
                   <ConfirmActionButton
                     action={voidChargeAction.bind(null, charge.id)}
@@ -117,6 +141,15 @@ async function ChargeDetail({ params }: { params: PageProps<"/dashboard/cuotas/[
                         {payment.reference && ` · ${payment.reference}`}
                       </span>
                     </span>
+                    {canFixPayments && !payment.provider && (
+                      <Link
+                        href={`/dashboard/cuotas/${charge.id}/editar?que=pago&pago=${payment.id}`}
+                        className={buttonVariants({ variant: "ghost", size: "sm" })}
+                        aria-label={`Corregir pago de ${money(payment.amount)}`}
+                      >
+                        Corregir
+                      </Link>
+                    )}
                     {canUndo && (
                       <ConfirmActionButton
                         action={deletePaymentAction.bind(null, payment.id)}

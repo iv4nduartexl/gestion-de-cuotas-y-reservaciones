@@ -2,17 +2,20 @@
 
 import { useState } from "react";
 
+import Link from "next/link";
+
 import { createBlockedSlotAction } from "@/app/dashboard/schedule/actions";
 import { Field } from "@/components/forms/field";
 import { FormField } from "@/components/forms/form-field";
 import { FormMessage } from "@/components/forms/form-message";
 import { DatePicker } from "@/components/forms/py-inputs";
 import { TimePicker } from "@/components/forms/time-picker";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { useFormAction } from "@/hooks/use-form-action";
+import type { ActionState } from "@/lib/actions";
 
 export function BlockedSlotForm({
   staffOptions,
@@ -20,6 +23,7 @@ export function BlockedSlotForm({
   defaultStaffId = "",
   showStaffPicker,
   today,
+  editing,
 }: {
   staffOptions: { id: string; name: string }[];
   allowBusinessWide: boolean;
@@ -27,20 +31,31 @@ export function BlockedSlotForm({
   /** Hidden in solo mode: blocks apply to the whole business. */
   showStaffPicker: boolean;
   today: string;
+  /** Editing an existing día libre (who it is for can't change). */
+  editing?: {
+    action: (state: ActionState, formData: FormData) => Promise<ActionState>;
+    allDay: boolean;
+    startDate: string;
+    endDate: string;
+    startTime: string;
+    endTime: string;
+    reason: string | null;
+    cancelHref: string;
+  };
 }) {
-  const { state, pending, formProps } = useFormAction(createBlockedSlotAction, {});
+  const { state, pending, formProps } = useFormAction(editing?.action ?? createBlockedSlotAction, {});
   const errors = state.errors ?? {};
-  const [allDay, setAllDay] = useState(true);
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(today);
-  const [startTime, setStartTime] = useState("08:00");
-  const [endTime, setEndTime] = useState("12:00");
+  const [allDay, setAllDay] = useState(editing?.allDay ?? true);
+  const [startDate, setStartDate] = useState(editing?.startDate ?? today);
+  const [endDate, setEndDate] = useState(editing?.endDate ?? today);
+  const [startTime, setStartTime] = useState(editing?.startTime ?? "08:00");
+  const [endTime, setEndTime] = useState(editing?.endTime ?? "12:00");
 
   return (
     <form {...formProps} noValidate className="flex flex-col gap-5">
       {errors.form && <FormMessage type="error">{errors.form}</FormMessage>}
 
-      {showStaffPicker ? (
+      {editing ? null : showStaffPicker ? (
         <Field id="staffId" label="¿Para quién?" error={errors.staffId}>
           <NativeSelect id="staffId" name="staffId" className="w-full sm:max-w-sm" defaultValue={defaultStaffId}>
             {allowBusinessWide && <NativeSelectOption value="">Todo el negocio (ej.: feriado)</NativeSelectOption>}
@@ -98,11 +113,17 @@ export function BlockedSlotForm({
         maxLength={200}
         error={errors.reason}
         className="sm:max-w-md"
+        defaultValue={editing?.reason ?? undefined}
       />
-      <div>
+      <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={pending}>
-          {pending ? "Guardando…" : "Agregar día libre"}
+          {pending ? "Guardando…" : editing ? "Guardar cambios" : "Agregar día libre"}
         </Button>
+        {editing && (
+          <Link href={editing.cancelHref} className={buttonVariants({ variant: "ghost" })}>
+            Cancelar
+          </Link>
+        )}
       </div>
     </form>
   );

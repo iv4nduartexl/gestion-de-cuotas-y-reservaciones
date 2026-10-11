@@ -71,27 +71,47 @@ const clientFields = {
   newClientPhone: z.string().trim().default(""),
 };
 
+/** Where a turno goes (dashboard): a free slot, or a time "a mano" with a person. */
+const turnoTimeFields = {
+  serviceId: idSchema,
+  staffChoice,
+  date: z.string().regex(DATE_PATTERN, "Elegí una fecha."),
+  start: z.string().default(""),
+  manualTime: z.preprocess((v) => v === "true" || v === "on", z.boolean()),
+  time: z.string().default(""),
+};
+
+function requireTurnoTime(data: { manualTime: boolean; time: string; staffChoice: string; start: string }, ctx: z.RefinementCtx) {
+  if (data.manualTime) {
+    if (!TIME_PATTERN.test(data.time)) ctx.addIssue({ code: "custom", path: ["time"], message: "Elegí una hora." });
+    if (data.staffChoice === "any") ctx.addIssue({ code: "custom", path: ["staffChoice"], message: "Elegí una persona." });
+  } else if (!data.start) {
+    ctx.addIssue({ code: "custom", path: ["start"], message: "Elegí un horario." });
+  }
+}
+
 /** Dashboard "Nuevo turno". */
 export const dashboardBookingSchema = z
-  .object({
-    ...clientFields,
-    serviceId: idSchema,
-    staffChoice,
-    date: z.string().regex(DATE_PATTERN, "Elegí una fecha."),
-    start: z.string().default(""),
-    manualTime: z.preprocess((v) => v === "true" || v === "on", z.boolean()),
-    time: z.string().default(""),
-    notes: optionalText(300),
-  })
+  .object({ ...clientFields, ...turnoTimeFields, notes: optionalText(300) })
   .superRefine((data, ctx) => {
     requireClient(data, ctx);
-    if (data.manualTime) {
-      if (!TIME_PATTERN.test(data.time)) ctx.addIssue({ code: "custom", path: ["time"], message: "Elegí una hora." });
-      if (data.staffChoice === "any") ctx.addIssue({ code: "custom", path: ["staffChoice"], message: "Elegí una persona." });
-    } else if (!data.start) {
-      ctx.addIssue({ code: "custom", path: ["start"], message: "Elegí un horario." });
-    }
+    requireTurnoTime(data, ctx);
   });
+
+/** "Cambiar día y hora" of a turno (also its service and person). */
+export const changeTurnoSchema = z.object(turnoTimeFields).superRefine(requireTurnoTime);
+
+/** "Cambiar cliente" of a turno: another client, or a new one. */
+export const changeClientSchema = z.object(clientFields).superRefine(requireClient);
+
+/** "Cambiar fechas" of a rental. */
+export const changeStayDatesSchema = z
+  .object({
+    checkIn: z.string().regex(DATE_PATTERN, "Elegí la fecha de entrada."),
+    checkOut: z.string().regex(DATE_PATTERN, "Elegí la fecha de salida."),
+    keepPrice: z.preprocess((v) => v === "true" || v === "on", z.boolean()),
+  })
+  .refine((data) => data.checkOut >= data.checkIn, { path: ["checkOut"], message: "La salida tiene que ser después de la entrada." });
 
 /** Dashboard rental booking. The price is parsed with the rental's currency. */
 export const dashboardStayBookingSchema = z

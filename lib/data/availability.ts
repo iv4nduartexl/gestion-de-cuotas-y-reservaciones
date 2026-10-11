@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, gt, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
 
 import { db } from "@/db";
 import { appointments, availabilityRules, blockedSlots, staff } from "@/db/schema";
@@ -99,7 +99,7 @@ export async function replaceWeeklySchedule(
  */
 export async function loadStaffAvailability(
   ctx: TenantScope,
-  { staffIds, from, to }: { staffIds: string[]; from: Date; to: Date },
+  { staffIds, from, to, excludeAppointmentId }: { staffIds: string[]; from: Date; to: Date; excludeAppointmentId?: string },
 ): Promise<StaffAvailability[]> {
   if (staffIds.length === 0) return [];
   const org = ctx.organization.id;
@@ -134,6 +134,8 @@ export async function loadStaffAvailability(
           inArray(appointments.status, [...ACTIVE_STATUSES]),
           lt(appointments.startsAt, to),
           gt(appointments.endsAt, from),
+          // Moving a turno: its current time doesn't block itself.
+          excludeAppointmentId ? ne(appointments.id, excludeAppointmentId) : undefined,
         ),
       ),
   ]);
